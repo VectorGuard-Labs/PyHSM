@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vectorguard-pyhsm"
-version = "2.3.2"
+version = "2.3.3"
 description = "Production-grade software Key Management Service (KMS) — key lifecycle, authenticated encryption, digital signing, and tamper-evident audit logging."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -34,6 +34,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0,<9.0.0",
     "pytest-cov>=6.0.0,<7.0.0",
+    "hypothesis>=6.100.0,<7.0.0",
 ]
 
 [project.urls]

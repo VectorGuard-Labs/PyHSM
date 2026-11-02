@@ -215,6 +215,7 @@ class IPCServer:
         session_timeout_s: float = 0.0,
         rate_limit_max_ops: int = 100,
         rate_limit_window_s: float = 60.0,
+        conn_timeout_s: float = _CONN_TIMEOUT_S,
     ) -> None:
         # --- Require ipc_secret — no unauthenticated operation ---
         if not ipc_secret:
@@ -229,6 +230,7 @@ class IPCServer:
         self._socket_path = socket_path
         self._ipc_secret: bytes = ipc_secret.encode("utf-8")
         self._shutdown = threading.Event()
+        self._conn_timeout_s = conn_timeout_s
 
         _logger.info("IPC server starting", extra={
             "event": "ipc_server_start",
@@ -296,42 +298,40 @@ class IPCServer:
         elif op == "get_metrics":
             return hsm.get_metrics()
 
-        # --- Per-key mutating operations: use the key's own lock ---
+        # --- Per-key mutating operations: PyHSM methods manage their own per-key locks ---
         elif op in ("encrypt", "decrypt", "sign", "verify",
                     "rotate_key", "destroy_key", "export_jwk"):
             key_id = req["key_id"]
-            with hsm._key_lock(key_id):
-                if op == "encrypt":
-                    return hsm.encrypt(key_id, req["plaintext"], caller_id=caller_id)
-                elif op == "decrypt":
-                    result = hsm.decrypt(key_id, req["ciphertext"], caller_id=caller_id)
-                    return result.decode("utf-8", errors="surrogateescape")
-                elif op == "sign":
-                    return hsm.sign(key_id, req["message"], caller_id=caller_id)
-                elif op == "verify":
-                    return hsm.verify(key_id, req["message"], req["signature"], caller_id=caller_id)
-                elif op == "rotate_key":
-                    return hsm.rotate_key(key_id, caller_id=caller_id)
-                elif op == "destroy_key":
-                    hsm.destroy_key(key_id, caller_id=caller_id)
-                    return None
-                elif op == "export_jwk":
-                    return hsm.export_jwk(key_id, caller_id=caller_id)
+            if op == "encrypt":
+                return hsm.encrypt(key_id, req["plaintext"], caller_id=caller_id)
+            elif op == "decrypt":
+                result = hsm.decrypt(key_id, req["ciphertext"], caller_id=caller_id)
+                return result.decode("utf-8", errors="surrogateescape")
+            elif op == "sign":
+                return hsm.sign(key_id, req["message"], caller_id=caller_id)
+            elif op == "verify":
+                return hsm.verify(key_id, req["message"], req["signature"], caller_id=caller_id)
+            elif op == "rotate_key":
+                return hsm.rotate_key(key_id, caller_id=caller_id)
+            elif op == "destroy_key":
+                hsm.destroy_key(key_id, caller_id=caller_id)
+                return None
+            elif op == "export_jwk":
+                return hsm.export_jwk(key_id, caller_id=caller_id)
 
-        # --- Session-level operations: use the HSM global lock ---
+        # --- Session-level operations: PyHSM methods manage their own global lock ---
         elif op in ("generate_key", "create_backup", "verify_backup"):
-            with hsm._global_lock:
-                if op == "generate_key":
-                    return hsm.generate_key(
-                        req["key_id"],
-                        req.get("key_type", "aes-256"),
-                        policy=req.get("policy"),
-                        caller_id=caller_id,
-                    )
-                elif op == "create_backup":
-                    return hsm.create_backup(req["backup_dir"], caller_id=caller_id)
-                elif op == "verify_backup":
-                    return hsm.verify_backup(req["backup_path"], caller_id=caller_id)
+            if op == "generate_key":
+                return hsm.generate_key(
+                    req["key_id"],
+                    req.get("key_type", "aes-256"),
+                    policy=req.get("policy"),
+                    caller_id=caller_id,
+                )
+            elif op == "create_backup":
+                return hsm.create_backup(req["backup_dir"], caller_id=caller_id)
+            elif op == "verify_backup":
+                return hsm.verify_backup(req["backup_path"], caller_id=caller_id)
 
         raise ValueError(f"Unhandled operation: {op!r}")
 
@@ -341,7 +341,7 @@ class IPCServer:
         # cannot hold this thread indefinitely. If the client sends no data
         # within _CONN_TIMEOUT_S seconds the socket.timeout exception is
         # caught below and the connection is dropped cleanly.
-        conn.settimeout(_CONN_TIMEOUT_S)
+        conn.settimeout(self._conn_timeout_s)
         try:
             while True:
                 request = _recv_msg(conn)
@@ -404,15 +404,18 @@ class IPCServer:
                 "socket_path": self._socket_path,
             })
 
-            # Install signal handlers for clean shutdown
-            def _shutdown_handler(signum, frame):
-                _logger.info("IPC server shutting down", extra={
-                    "event": "ipc_shutdown", "signal": signum,
-                })
-                self._shutdown.set()
+            # Install signal handlers for clean shutdown.
+            # signal.signal() only works on the main thread; when run() is
+            # called from a background thread (e.g. in tests), skip installation.
+            if threading.current_thread() is threading.main_thread():
+                def _shutdown_handler(signum, frame):
+                    _logger.info("IPC server shutting down", extra={
+                        "event": "ipc_shutdown", "signal": signum,
+                    })
+                    self._shutdown.set()
 
-            signal.signal(signal.SIGTERM, _shutdown_handler)
-            signal.signal(signal.SIGINT, _shutdown_handler)
+                signal.signal(signal.SIGTERM, _shutdown_handler)
+                signal.signal(signal.SIGINT, _shutdown_handler)
 
             while not self._shutdown.is_set():
                 try:
