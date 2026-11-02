@@ -633,8 +633,9 @@ class KeyStore:
                         "event": "tamper_detected", "reason": "hmac_mismatch",
                     })
                     raise TamperError(
-                        "PyHSM TAMPER DETECTED: HMAC verification failed. "
-                        "Keystore may have been modified outside of PyHSM."
+                        "PyHSM ERROR: Keystore authentication failed. "
+                        "The master password may be incorrect, or the keystore "
+                        "may have been modified. No key material was released."
                     )
                 # PBKDF2 load succeeded — mark for KDF migration to Argon2id
                 _logger.info("migrating keystore KDF from PBKDF2 to Argon2id", extra={
@@ -646,8 +647,9 @@ class KeyStore:
                     "event": "tamper_detected", "reason": "hmac_mismatch",
                 })
                 raise TamperError(
-                    "PyHSM TAMPER DETECTED: HMAC verification failed. "
-                    "Keystore may have been modified outside of PyHSM."
+                    "PyHSM ERROR: Keystore authentication failed. "
+                    "The master password may be incorrect, or the keystore "
+                    "may have been modified. No key material was released."
                 )
         else:
             self._needs_kdf_migration = False

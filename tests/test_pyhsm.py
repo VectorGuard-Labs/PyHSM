@@ -99,7 +99,7 @@ class TestKeyStore:
         ba[-10] ^= 0xFF
         Path(store_path).write_bytes(bytes(ba))
 
-        with pytest.raises(TamperError, match="TAMPER"):
+        with pytest.raises(TamperError, match="authentication failed"):
             PyHSM(store_path, master_password=_TEST_PW, session_timeout_s=0)
 
     def test_tamper_detection_truncated_file(self, store_path):
