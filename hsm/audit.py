@@ -466,12 +466,15 @@ class AuditLog:
                         }
 
             # Verify the HMAC chain within this file.
-            # The chain anchor is "0"*64 for the first file ever written,
-            # or the HMAC of the rotationOpen entry for subsequent files
-            # (which we reconstruct below by walking the chain from "0"*64
-            # reset — each file's internal chain is self-contained; only
-            # cross-file stitching uses prev_seal_hmac).
-            current_prev = "0" * 64
+            # For the very first file the chain starts at "0"*64.
+            # For subsequent files (those that start with a rotationOpen entry),
+            # the chain anchor is the rotationSeal HMAC from the previous file —
+            # because _rotate() writes rotationOpen with self._last_hmac already
+            # set to the seal entry's HMAC, so rotationOpen's own HMAC was
+            # computed over json(rotationOpen) + seal_hmac.
+            # Resetting to "0"*64 here was the bug: it made the verifier compute
+            # an expected HMAC that never matched the stored one.
+            current_prev = prev_seal_hmac if prev_seal_hmac is not None else "0" * 64
             last_hmac_in_file = "0" * 64
             seal_hmac_in_file: str | None = None
 

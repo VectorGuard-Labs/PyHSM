@@ -292,23 +292,11 @@ class TestAuditLogRotation:
     across file boundaries and detect any tampering with rotated files.
     """
 
-    @pytest.mark.xfail(
-        reason="Known defect: verify_across_rotations() resets chain anchor to '0'*64 "
-               "per file, but entries were HMACed against the running chain from the "
-               "prior file. Cross-rotation verification fails on all files except the first.",
-        strict=True,
-    )
     def test_chain_is_valid_after_rotation(self, tmp_path):
         """LC-AL-01: HMAC chain must be verifiable via verify_across_rotations() after rotation.
 
-        KNOWN DEFECT: verify_across_rotations() in audit.py resets current_prev to
-        '0'*64 at the start of each file. However, entries in files .1, .2, etc. were
-        HMACed against the live running chain (where prev was the previous entry's HMAC,
-        not '0'*64). This means the cross-rotation verifier always reports HMAC mismatch
-        on the rotationOpen entry of any file after the first.
-
-        This test is marked xfail to document the defect until it is fixed.
-        Fix: pass the seal HMAC as the starting current_prev when verifying subsequent files.
+        Expected: verify_across_rotations()["ok"] is True after entries have
+        forced a file rotation.
         """
         path = str(tmp_path / "audit.jsonl")
         log = AuditLog(path, hmac_key=os.urandom(32), max_entries=3, max_bytes=0)
@@ -328,11 +316,6 @@ class TestAuditLogRotation:
             log.record("encrypt", key_id=f"k{i}", success=True)
         assert os.path.exists(path + ".1")
 
-    @pytest.mark.xfail(
-        reason="Known defect: verify_across_rotations() resets HMAC chain anchor per file. "
-               "See test_chain_is_valid_after_rotation for full explanation.",
-        strict=True,
-    )
     def test_cross_rotation_chain_is_intact(self, tmp_path):
         """LC-AL-03: verify_across_rotations() must return ok=True for an unmodified log.
 
@@ -347,11 +330,6 @@ class TestAuditLogRotation:
         assert result["ok"] is True
         assert len(result["files_checked"]) >= 2
 
-    @pytest.mark.xfail(
-        reason="Known defect: verify_across_rotations() resets HMAC chain anchor per file. "
-               "Cannot verify tamper detection until the base chain verification is fixed.",
-        strict=True,
-    )
     def test_deleted_rotated_file_detected_by_cross_rotation_verify(self, tmp_path):
         """LC-AL-04: Deleting a rotated file must be detected by verify_across_rotations().
 

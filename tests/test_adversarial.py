@@ -1337,3 +1337,328 @@ class TestPasswordFilePermissionAttacks:
 
         password = load_password_from_file(str(pw_file))
         assert password == "AdversarialTest-789!"
+
+
+# ===========================================================================
+# AT-AS: Asymmetric key constraint attacks
+# ===========================================================================
+
+class TestAsymmetricKeyConstraintAttacks:
+    """
+    AT-AS: Attacks that attempt to misuse asymmetric keys — using signing keys
+    for encryption, using encrypt-only keys for signing, or mixing up key types
+    in ways the policy model does not permit.
+
+    Defense: PyHSM enforces key-type constraints in every operation:
+    encrypt/decrypt require AES keys, sign/verify require RSA/EC/Ed25519 keys,
+    and get_public_key is only valid for asymmetric keys.
+    """
+
+    def test_encrypt_with_rsa_key_raises(self, hsm):
+        """AT-AS-01: AES-GCM encryption must be rejected for an RSA key.
+
+        Attack: caller attempts to use an RSA private key as an AES encryption
+        key (e.g., by generating rsa-2048 and then calling encrypt()).
+        Expected: ValueError mentioning "AES key".
+        """
+        hsm.generate_key("rsa-key", "rsa-2048")
+        with pytest.raises(ValueError, match="AES key"):
+            hsm.encrypt("rsa-key", "secret data")
+
+    def test_encrypt_with_ec_key_raises(self, hsm):
+        """AT-AS-02: AES-GCM encryption must be rejected for an EC key.
+
+        Attack: caller attempts to use an EC key as an encryption key.
+        Expected: ValueError mentioning "AES key".
+        """
+        hsm.generate_key("ec-key", "ec-p256")
+        with pytest.raises(ValueError, match="AES key"):
+            hsm.encrypt("ec-key", "secret data")
+
+    def test_encrypt_with_ed25519_key_raises(self, hsm):
+        """AT-AS-03: AES-GCM encryption must be rejected for an Ed25519 key.
+
+        Attack: caller attempts to use an Ed25519 signing key for encryption.
+        Expected: ValueError mentioning "AES key".
+        """
+        hsm.generate_key("ed-key", "ed25519")
+        with pytest.raises(ValueError, match="AES key"):
+            hsm.encrypt("ed-key", "secret data")
+
+    def test_sign_with_aes256_key_raises(self, hsm):
+        """AT-AS-04: Signing must be rejected for an AES-256 key.
+
+        Attack: caller attempts to sign data with an AES key (no private key material
+        for asymmetric signing exists).
+        Expected: ValueError mentioning "RSA, EC, or Ed25519".
+        """
+        hsm.generate_key("aes-key", "aes-256")
+        with pytest.raises(ValueError, match="RSA, EC, or Ed25519"):
+            hsm.sign("aes-key", "data to sign")
+
+    def test_sign_with_aes128_key_raises(self, hsm):
+        """AT-AS-05: Signing must be rejected for an AES-128 key.
+
+        Attack: caller uses a 128-bit AES key for a signing call.
+        Expected: ValueError mentioning "RSA, EC, or Ed25519".
+        """
+        hsm.generate_key("aes128-key", "aes-128")
+        with pytest.raises(ValueError, match="RSA, EC, or Ed25519"):
+            hsm.sign("aes128-key", "data")
+
+    def test_decrypt_with_rsa_key_raises(self, hsm):
+        """AT-AS-06: AES-GCM decryption must be rejected for an RSA key.
+
+        Attack: caller submits an RSA key ID to the decrypt operation.
+        Expected: ValueError mentioning "AES key".
+        """
+        hsm.generate_key("rsa-key", "rsa-2048")
+        with pytest.raises(ValueError, match="AES key"):
+            hsm.decrypt("rsa-key", "deadbeef" * 8)
+
+    def test_decrypt_with_ec_key_raises(self, hsm):
+        """AT-AS-07: AES-GCM decryption must be rejected for an EC key.
+
+        Attack: caller submits an EC key ID to the decrypt operation.
+        Expected: ValueError mentioning "AES key".
+        """
+        hsm.generate_key("ec-key", "ec-p256")
+        with pytest.raises(ValueError, match="AES key"):
+            hsm.decrypt("ec-key", "deadbeef" * 8)
+
+    def test_get_public_key_from_aes_raises(self, hsm):
+        """AT-AS-08: Exporting a public key from a symmetric AES key must raise.
+
+        Attack: caller attempts to extract a "public key" from an AES key,
+        which has no asymmetric component.
+        Expected: ValueError.
+        """
+        hsm.generate_key("sym-key", "aes-256")
+        with pytest.raises(ValueError):
+            hsm.get_public_key("sym-key")
+
+    def test_verify_with_aes_key_raises(self, hsm):
+        """AT-AS-09: Signature verification must be rejected for a symmetric key.
+
+        Attack: caller passes an AES key ID to verify(), hoping it falls through
+        to a code path that processes the symmetric key as if it had a public component.
+        Expected: ValueError.
+        """
+        hsm.generate_key("aes-key", "aes-256")
+        with pytest.raises(ValueError):
+            hsm.verify("aes-key", "data", "00" * 64)
+
+    def test_rotate_rsa_key_raises(self, hsm):
+        """AT-AS-10: Key rotation must be rejected for RSA keys.
+
+        Rotation generates a new AES key material in-place; it is not defined
+        for asymmetric keys (new RSA key generation would change the public key,
+        invalidating all previously issued certificates or JWKs).
+        Expected: ValueError mentioning AES.
+        """
+        hsm.generate_key("rsa-rot", "rsa-2048")
+        with pytest.raises(ValueError, match="[Aa][Ee][Ss]"):
+            hsm.rotate_key("rsa-rot")
+
+    def test_rotate_ec_key_raises(self, hsm):
+        """AT-AS-11: Key rotation must be rejected for EC keys.
+
+        Expected: ValueError mentioning AES.
+        """
+        hsm.generate_key("ec-rot", "ec-p256")
+        with pytest.raises(ValueError, match="[Aa][Ee][Ss]"):
+            hsm.rotate_key("ec-rot")
+
+    def test_cross_key_type_ciphertext_rejected(self, hsm):
+        """AT-AS-12: Ciphertext encrypted under one AES key must not decrypt under another.
+
+        Attack: attacker routes ciphertext from key-A to a decrypt call using
+        key-B (key confusion / cross-key oracle attack).
+        Defense: AAD binds ciphertext to key_id; GCM tag fails on wrong key.
+        Expected: Exception raised (GCM authentication tag mismatch).
+        """
+        hsm.generate_key("key-a", "aes-256")
+        hsm.generate_key("key-b", "aes-256")
+        ct = hsm.encrypt("key-a", "secret payload")
+        with pytest.raises(Exception):
+            hsm.decrypt("key-b", ct)
+
+
+# ===========================================================================
+# AT-KS-EX: Key separation verification
+# ===========================================================================
+
+class TestKeySeparationVerification:
+    """
+    AT-KS-EX: Verifies that the three HKDF-derived subkeys (encryption key,
+    MAC key, KEK) are cryptographically independent. A compromise of one
+    must not reveal the others.
+
+    These tests operate at the KeyStore level, verifying that:
+    1. enc_key, mac_key, and KEK are all distinct values.
+    2. The keys change when the salt changes (they are salt-dependent).
+    3. The same master password with a different salt produces completely
+       different keys (no correlation).
+    """
+
+    def test_enc_key_and_mac_key_are_distinct(self, store_path):
+        """AT-KS-EX-01: Encryption key and MAC key derived from the same password must differ.
+
+        Defense: independent HKDF-Expand calls with different 'info' strings
+        ("pyhsm-enc-v1" vs "pyhsm-mac-v1"). If both used the same derivation,
+        a MAC forgery attack could reuse enc_key as the MAC key.
+        Expected: enc_key ≠ mac_key.
+        """
+        from hsm.storage import KeyStore
+        import os
+
+        store = KeyStore(store_path, master_password=_STRONG_PW)
+        salt = os.urandom(16)
+        enc_key, mac_key = store._derive_subkeys(salt)
+
+        assert bytes(enc_key) != bytes(mac_key), (
+            "enc_key and mac_key must be distinct — HKDF info strings differ"
+        )
+        from hsm.secure_memory import zeroize_bytearray
+        zeroize_bytearray(enc_key)
+        zeroize_bytearray(mac_key)
+        store.zeroize_memory()
+
+    def test_kek_is_distinct_from_enc_and_mac_keys(self, store_path):
+        """AT-KS-EX-02: KEK must differ from both enc_key and mac_key.
+
+        Defense: KEK uses a separate salt stored inside the encrypted keystore
+        and a distinct info string ("pyhsm-kek-v1"). If KEK equalled enc_key,
+        an attacker who recovered the enc_key (e.g. via GCM nonce reuse) would
+        also have the key to unwrap all stored key material.
+        Expected: kek ≠ enc_key and kek ≠ mac_key.
+        """
+        from hsm.storage import KeyStore
+        import os
+
+        store = KeyStore(store_path, master_password=_STRONG_PW)
+        salt = os.urandom(16)
+        enc_key, mac_key = store._derive_subkeys(salt)
+        kek = store._derive_kek()
+
+        assert bytes(kek) != bytes(enc_key), "KEK must not equal enc_key"
+        assert bytes(kek) != bytes(mac_key), "KEK must not equal mac_key"
+        from hsm.secure_memory import zeroize_bytearray
+        zeroize_bytearray(enc_key)
+        zeroize_bytearray(mac_key)
+        zeroize_bytearray(kek)
+        store.zeroize_memory()
+
+    def test_different_salts_produce_different_subkeys(self, store_path):
+        """AT-KS-EX-03: Two different salts must produce different subkey pairs.
+
+        This confirms the salt actually participates in key derivation (not ignored).
+        If salt were ignored, an attacker who observed one ciphertext could derive
+        the keys for any other ciphertext with the same password.
+        Expected: enc_key_1 ≠ enc_key_2 and mac_key_1 ≠ mac_key_2.
+        """
+        from hsm.storage import KeyStore
+        import os
+
+        store = KeyStore(store_path, master_password=_STRONG_PW)
+        salt_1 = os.urandom(16)
+        salt_2 = os.urandom(16)
+        # Extremely unlikely to collide (128-bit random salt)
+        while salt_2 == salt_1:
+            salt_2 = os.urandom(16)
+
+        enc_1, mac_1 = store._derive_subkeys(salt_1)
+        enc_2, mac_2 = store._derive_subkeys(salt_2)
+
+        assert bytes(enc_1) != bytes(enc_2), "Different salts must yield different enc_keys"
+        assert bytes(mac_1) != bytes(mac_2), "Different salts must yield different mac_keys"
+        from hsm.secure_memory import zeroize_bytearray
+        for k in (enc_1, mac_1, enc_2, mac_2):
+            zeroize_bytearray(k)
+        store.zeroize_memory()
+
+    def test_different_passwords_produce_different_subkeys(self, store_path):
+        """AT-KS-EX-04: Two different master passwords must produce different subkeys.
+
+        This confirms Argon2id password input actually affects derived keys.
+        If the password input were ignored, any password would open any keystore.
+        Expected: keys derived from password-A ≠ keys derived from password-B.
+        """
+        import tempfile
+        from hsm.storage import KeyStore
+        import os
+
+        store_b_path = store_path + ".b"
+        store_a = KeyStore(store_path, master_password=_STRONG_PW)
+        store_b = KeyStore(store_b_path, master_password="DifferentPassword!99")
+
+        salt = os.urandom(16)
+        enc_a, mac_a = store_a._derive_subkeys(salt)
+        enc_b, mac_b = store_b._derive_subkeys(salt)
+
+        assert bytes(enc_a) != bytes(enc_b), "Different passwords must yield different enc_keys"
+        assert bytes(mac_a) != bytes(mac_b), "Different passwords must yield different mac_keys"
+        from hsm.secure_memory import zeroize_bytearray
+        for k in (enc_a, mac_a, enc_b, mac_b):
+            zeroize_bytearray(k)
+        store_a.zeroize_memory()
+        store_b.zeroize_memory()
+
+    def test_secure_bytes_zeroization_clears_buffer(self, store_path):
+        """AT-KS-EX-05: SecureBytes.zeroize() must overwrite the buffer with zeros.
+
+        Defense: key material is held in SecureBytes (wrapping bytearray) during
+        use and zeroized immediately after each operation.
+        Expected: buf is all-zero after zeroize(); accessing buf raises RuntimeError.
+        """
+        from hsm.secure_memory import SecureBytes
+
+        raw = bytes(range(32))
+        sb = SecureBytes(raw)
+        assert bytes(sb.buf) == raw  # data is present before zeroize
+        sb.zeroize()
+        # Buffer should be all zeros
+        assert all(b == 0 for b in sb._buf)
+        # Accessing .buf after zeroize should raise
+        with pytest.raises(RuntimeError, match="zeroized"):
+            _ = sb.buf
+
+    def test_zeroize_bytearray_overwrites_in_place(self, store_path):
+        """AT-KS-EX-06: zeroize_bytearray() must overwrite the exact same object.
+
+        Defense: per-operation key material is zeroized before returning to the
+        heap. This test verifies the zeroing is in-place (not a copy).
+        Expected: same bytearray object is all-zero after call.
+        """
+        from hsm.secure_memory import zeroize_bytearray
+
+        buf = bytearray(b"\xff" * 32)
+        original_id = id(buf)
+        zeroize_bytearray(buf)
+
+        assert id(buf) == original_id, "zeroize_bytearray must operate in-place"
+        assert bytes(buf) == b"\x00" * 32, "buffer must be all zeros after zeroize"
+
+    def test_key_material_zeroized_after_session_close(self, store_path):
+        """AT-KS-EX-07: All key material in the keystore must be zeroed on session close.
+
+        Defense: _close_session_locked() calls store.zeroize_memory() which calls
+        zeroize_dict_keys() on every key entry.
+        Expected: after close_session(), the key_data bytearrays in the internal
+        store are all-zero.
+        """
+        h = PyHSM(store_path, master_password=_STRONG_PW, session_timeout_s=0)
+        h.generate_key("zeroize-test")
+
+        # Grab a reference to the key_data bytearray BEFORE close
+        entry = h._store._keys.get("zeroize-test")
+        assert entry is not None
+        kd = entry["versions"][0]["key_data"]
+        assert isinstance(kd, bytearray), "key_data must be bytearray before close"
+
+        h.close_session()
+
+        # After close, the same bytearray object must be all-zero
+        assert all(b == 0 for b in kd), (
+            "key_data bytearray must be zeroed after close_session()"
+        )

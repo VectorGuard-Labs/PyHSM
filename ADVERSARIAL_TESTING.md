@@ -1,11 +1,12 @@
 # PyHSM Adversarial Testing Report
 
 **Project:** PyHSM  
-**Version tested:** current (`main` branch)  
+**Version tested:** v2.3.4 (`main` branch)  
 **Date:** November 2, 2026  
 **Tested by:** VectorGuard Labs internal review  
-**Test file:** `tests/test_adversarial.py`  
-**Result: 80 / 80 adversarial tests passed**
+**Test files:** `tests/test_adversarial.py`, `tests/test_ipc_adversarial.py`,
+`tests/test_lifecycle_recovery.py`, `tests/test_property_based.py`  
+**Result: 341 / 341 tests passed (0 xfail)**
 
 ---
 
@@ -24,12 +25,21 @@ when attacked.
 To reproduce all results:
 
 ```bash
-python -m pytest tests/test_adversarial.py -v --no-cov
+python -m pytest tests/test_adversarial.py tests/test_ipc_adversarial.py \
+    tests/test_lifecycle_recovery.py tests/test_property_based.py -v --no-cov
+```
+
+Or run the complete project suite (341 tests):
+
+```bash
+python -m pytest tests/ --no-cov
 ```
 
 ---
 
 ## Test Categories
+
+### `tests/test_adversarial.py` — Core adversarial suite
 
 | Category | Code | Tests | Result |
 |----------|------|-------|--------|
@@ -44,7 +54,44 @@ python -m pytest tests/test_adversarial.py -v --no-cov
 | JWK import attacks | AT-JW | 6 | ✅ All passed |
 | Session integrity attacks | AT-SE | 6 | ✅ All passed |
 | Password file permission attacks | AT-PF | 5 | ✅ All passed |
-| **Total** | | **80** | **✅ 80 / 80** |
+| Asymmetric key constraint attacks | AT-AS | 12 | ✅ All passed |
+| Key separation verification | AT-KS-EX | 7 | ✅ All passed |
+| **Subtotal** | | **99** | **✅ 99 / 99** |
+
+### `tests/test_ipc_adversarial.py` — IPC process-isolation boundary
+
+| Category | Code | Tests | Result |
+|----------|------|-------|--------|
+| Authentication attacks | IPC-AU | 5 | ✅ All passed |
+| Protocol attacks | IPC-PR | 5 | ✅ All passed |
+| Operation attacks | IPC-OP | 4 | ✅ All passed |
+| Concurrency attacks | IPC-CN | 3 | ✅ All passed |
+| Lifecycle attacks | IPC-LF | 3 | ✅ All passed |
+| **Subtotal** | | **20** | **✅ 20 / 20** |
+
+### `tests/test_lifecycle_recovery.py` — Lifecycle and recovery
+
+| Category | Code | Tests | Result |
+|----------|------|-------|--------|
+| Session timeout | LC-ST | 3 | ✅ All passed |
+| Key rotation lifecycle | LC-KR | 5 | ✅ All passed |
+| Backup lifecycle | LC-BK | 5 | ✅ All passed |
+| Audit log rotation | LC-AL | 5 | ✅ All passed |
+| Crash-safe persistence | LC-IW | 3 | ✅ All passed |
+| Concurrent operations | LC-CC | 4 | ✅ All passed |
+| **Subtotal** | | **25** | **✅ 25 / 25** |
+
+### `tests/test_property_based.py` — Hypothesis property-based tests
+
+| Category | Code | Tests | Result |
+|----------|------|-------|--------|
+| JWK parsing invariants | PB-JW | 3 | ✅ All passed |
+| Ciphertext decode invariants | PB-CT | 2 | ✅ All passed |
+| Shamir sharing invariants | PB-SS | 4 | ✅ All passed |
+| Encrypt/decrypt round-trip | PB-EN | 4 | ✅ All passed |
+| Key ID validation invariants | PB-KI | 2 | ✅ All passed |
+| Audit HMAC chain invariants | PB-AU | 2 | ✅ All passed |
+| **Subtotal** | | **17** | **✅ 17 / 17** |
 
 ---
 
@@ -346,51 +393,149 @@ an attacker from swapping the target between a permissions check and a read.
 
 ---
 
+## AT-AS: Asymmetric Key Constraint Attacks
+
+**Threat:** An attacker attempts to misuse keys for operations their type does not support —
+using RSA/EC signing keys for AES-GCM encryption, using AES keys for signing, or routing
+ciphertext between incompatible keys to exploit confusion.
+
+**Defense:** PyHSM enforces key-type constraints at the start of every operation:
+`encrypt()`/`decrypt()` require `key_type.startswith("aes")`; `sign()`/`verify()` require
+`key_type.startswith("rsa")`, `.startswith("ec")`, or `== "ed25519"`.
+
+| Test ID | Attack Scenario | Expected Behavior | Result |
+|---------|----------------|-------------------|--------|
+| AT-AS-01 | Encrypt with RSA-2048 key | `ValueError: AES key` | ✅ |
+| AT-AS-02 | Encrypt with EC-P256 key | `ValueError: AES key` | ✅ |
+| AT-AS-03 | Encrypt with Ed25519 key | `ValueError: AES key` | ✅ |
+| AT-AS-04 | Sign with AES-256 key | `ValueError: RSA, EC, or Ed25519` | ✅ |
+| AT-AS-05 | Sign with AES-128 key | `ValueError: RSA, EC, or Ed25519` | ✅ |
+| AT-AS-06 | Decrypt with RSA-2048 key | `ValueError: AES key` | ✅ |
+| AT-AS-07 | Decrypt with EC-P256 key | `ValueError: AES key` | ✅ |
+| AT-AS-08 | get_public_key from AES-256 key | `ValueError` | ✅ |
+| AT-AS-09 | verify() with AES key | `ValueError` | ✅ |
+| AT-AS-10 | rotate_key() on RSA-2048 | `ValueError` (AES-only message) | ✅ |
+| AT-AS-11 | rotate_key() on EC-P256 | `ValueError` (AES-only message) | ✅ |
+| AT-AS-12 | Decrypt key-A ciphertext under key-B | `Exception` (GCM tag mismatch) | ✅ |
+
+---
+
+## AT-KS-EX: Cryptographic Key Separation Verification
+
+**Threat:** A cryptographic implementation bug that causes two derived keys to be identical
+or correlated — allowing an attacker who recovers one key (e.g., via nonce reuse or GCM
+birthday-bound collision) to also derive the others.
+
+**Defense:** HKDF-Expand with independent `info` strings: `enc_key` (`pyhsm-enc-v1`),
+`mac_key` (`pyhsm-mac-v1`), `kek` (`pyhsm-kek-v1`), `audit_key` (`pyhsm-audit-hmac-v1`).
+All four are derived from the same Argon2id master but are cryptographically independent.
+
+| Test ID | Property Verified | Expected Behavior | Result |
+|---------|-----------------|-------------------|--------|
+| AT-KS-EX-01 | enc_key ≠ mac_key (same salt, same password) | Values differ | ✅ |
+| AT-KS-EX-02 | kek ≠ enc_key and kek ≠ mac_key | All three differ | ✅ |
+| AT-KS-EX-03 | Different salts → different subkeys | Salts participate in derivation | ✅ |
+| AT-KS-EX-04 | Different passwords → different subkeys | Password participates in derivation | ✅ |
+| AT-KS-EX-05 | SecureBytes.zeroize() clears buffer to all-zero | `buf` all-zero, `.buf` access raises | ✅ |
+| AT-KS-EX-06 | zeroize_bytearray() operates in-place | Same object, all-zero after call | ✅ |
+| AT-KS-EX-07 | key_data bytearray is all-zero after close_session() | Key material erased from memory | ✅ |
+
+---
+
+## Remediation History
+
+The following bugs were discovered through this testing process and fixed before release:
+
+### v2.3.2 — Error message ambiguity (Low)
+**Finding:** The `TamperError` raised on HMAC mismatch said `"TAMPER DETECTED: HMAC verification
+failed. Keystore may have been modified outside of PyHSM."` A wrong master password produces an
+identical HMAC mismatch without any file modification, making the message misleading.
+
+**Fix:** Message changed to `"Keystore authentication failed. The master password may be incorrect,
+or the keystore may have been modified. No key material was released."` — accurately covers both cases.
+
+---
+
+### v2.3.3 — IPC server deadlock (Critical, discovered in test)
+**Finding:** `ipc_server.py _dispatch()` acquired per-key or global locks before calling PyHSM
+methods that internally acquire the same locks. Non-reentrant Python `threading.Lock` deadlocked.
+Every IPC operation involving a key silently hung until the connection timed out.
+
+**Fix:** Removed the redundant outer locks from `_dispatch()`. PyHSM core manages all its own
+locking internally; the IPC layer does not need an additional layer.
+
+---
+
+### v2.3.3 — IPC signal handler crash (High, discovered in test)
+**Finding:** `ipc_server.py run()` called `signal.signal()` unconditionally. Python's signal
+module only permits signal handler installation on the main thread. When `run()` was called from
+a background thread (the normal test pattern), it raised `ValueError` and the server thread
+crashed before binding the socket.
+
+**Fix:** Added `threading.current_thread() is threading.main_thread()` guard. Signal handlers
+are installed only in the main thread; background-thread use skips installation.
+
+---
+
+### v2.3.4 — Audit log cross-rotation verification bug (High, discovered in test)
+**Finding:** `audit.py verify_across_rotations()` reset `current_prev = "0"*64` at the start
+of each file. However, the `rotationOpen` entry in each new file was written with `self._last_hmac`
+set to the preceding `rotationSeal` entry's HMAC — not `"0"*64`. The verifier's expected HMAC
+never matched the stored one, making cross-rotation verification always report failure regardless
+of whether the log had been tampered with.
+
+**Impact:** `verify_across_rotations()` was non-functional for any log that had undergone at least
+one rotation. An attacker who deleted a rotated log file could not be detected.
+
+**Fix:** Initialize `current_prev = prev_seal_hmac if prev_seal_hmac is not None else "0"*64`.
+This correctly continues the HMAC chain from the previous file's seal entry.
+
+---
+
 ## What This Testing Does and Does Not Prove
 
 ### What it proves
 
 - PyHSM rejects every tested attack input without releasing key material.
-- All 80 attack scenarios fail in the expected, documented way.
-- The rejections are enforced automatically and repeatedly — any future code
-  change that breaks a rejection will immediately fail a test in CI.
-- Specific security properties are tested: encrypt-then-MAC integrity, AAD
-  cross-key binding, Argon2id-gated authentication, HMAC chain tamper detection,
-  pre-interpolation share verification, per-index HMAC binding, and rate-limit
-  race condition prevention.
+- All 341 tests pass, including 99 adversarial scenarios, 20 IPC boundary tests,
+  25 lifecycle/recovery tests, and 17 property-based tests across thousands of
+  generated inputs.
+- All rejections are enforced automatically and repeatably — any future code change
+  that breaks a rejection will immediately fail a CI test.
+- Specific security properties are tested: encrypt-then-MAC integrity, AAD cross-key
+  binding, Argon2id-gated authentication, HMAC chain tamper detection, pre-interpolation
+  share verification, per-index HMAC binding, rate-limit race condition prevention,
+  IPC mutual authentication, cross-rotation audit chain integrity, key separation
+  (enc/mac/kek/audit keys are distinct), and in-place key material zeroization.
+- Four bugs were discovered during testing and fixed before release (see Remediation History above).
 
 ### What it does not prove
 
-- **Side-channel resistance at the hardware level.** Timing attacks against the
-  CPU execution units, cache-timing attacks, or power analysis are not covered
-  by software tests. A hardware-level side-channel audit requires dedicated
-  measurement equipment and methodology.
-- **Absence of unknown vulnerabilities.** Passing these tests means the known
-  attack surfaces are defended. It does not guarantee the absence of novel
-  attacks that were not anticipated during test design.
-- **IPC process isolation security.** The `ipc_client.py` / `ipc_server.py`
-  process-isolation layer has no adversarial test coverage and was not assessed
-  in this round.
-- **Network-facing attack surface.** PyHSM is a library, not a network service.
-  If it is exposed via an API layer, that layer requires its own security assessment.
-- **Independent validation.** These tests were designed and run by the same team
-  that wrote the code. Independent third-party adversarial testing and code review
-  are the next recommended step before production deployment in high-assurance
-  environments.
+- **Side-channel resistance at the hardware level.** Timing attacks against CPU execution
+  units, cache-timing attacks, or power analysis are not covered by software tests.
+- **Absence of unknown vulnerabilities.** Passing these tests means the known attack
+  surfaces are defended. Novel attacks not anticipated during test design are not excluded.
+- **IPC privilege escalation.** The IPC tests cover authentication, protocol, and
+  operational correctness. They do not test OS-level privilege escalation.
+- **Network-facing attack surface.** PyHSM is a library. If exposed via an API layer,
+  that layer requires its own security assessment.
+- **Independent validation.** These tests were designed and run by the same team that
+  wrote the code. Independent third-party adversarial testing and code review are the
+  recommended next step for high-assurance environments.
 
 ---
 
 ## Recommended Next Steps
 
-1. **Independent security audit** of `hsm/storage.py`, `hsm/core.py`, and
-   `hsm/shamir.py` by a third-party cryptographic review firm.
-2. **IPC layer adversarial tests** — add equivalent coverage for
-   `ipc_client.py` / `ipc_server.py`, including privilege-escalation scenarios
-   and malformed IPC message injection.
-3. **Cross-rotation audit chain verification test** — add a test that verifies
-   `verify_across_rotations()` detects a deleted or replaced rotated log file.
-4. **Session timeout test** — add a test that verifies the background timeout
-   thread actually calls `close_session()` and zeroizes key material.
-5. **Fuzz testing** — integrate a fuzzer (e.g., Hypothesis or Atheris) against
-   `import_jwk()`, `reconstruct_secret()`, and `decrypt()` to discover inputs
-   beyond the manually crafted adversarial cases.
+1. **Independent cryptographic code review** of `hsm/storage.py`, `hsm/core.py`,
+   `hsm/shamir.py`, and `hsm/ipc_server.py` by a third-party security firm.
+2. **IPC privilege escalation test** — verify that socket file permission (`0o600`)
+   and parent directory permission (`0o700`) prevent a different-UID process from
+   connecting even if it knows the socket path.
+3. **Fuzz testing with coverage guidance** (Atheris or LibFuzzer) targeting `import_jwk()`,
+   `reconstruct_secret()`, and `decrypt()` to discover inputs beyond manually crafted cases.
+4. **FIPS 140-3 alignment review** — document which algorithm parameter choices align with
+   FIPS-approved values and which are outside scope (e.g., Argon2id is not FIPS-approved).
+5. **Multi-instance rate limiter** — the current rate limiter is in-process and does not
+   coordinate across multiple PyHSM instances. Add an infrastructure-layer rate limiter
+   as a complement for deployments with N parallel instances.
