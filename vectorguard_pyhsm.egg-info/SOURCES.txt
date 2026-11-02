@@ -19,8 +19,13 @@ hsm/secure_memory.py
 hsm/self_test.py
 hsm/shamir.py
 hsm/storage.py
+tests/test_adversarial.py
+tests/test_audit_integration.py
 tests/test_cli.py
 tests/test_concurrency.py
+tests/test_ipc_adversarial.py
+tests/test_lifecycle_recovery.py
+tests/test_property_based.py
 tests/test_pyhsm.py
 vectorguard_pyhsm.egg-info/PKG-INFO
 vectorguard_pyhsm.egg-info/SOURCES.txt
