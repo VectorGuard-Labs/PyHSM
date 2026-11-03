@@ -1155,6 +1155,134 @@ class PyHSM:
             return pub
 
     # ------------------------------------------------------------------
+    # Ethereum / EVM blockchain signing
+    # ------------------------------------------------------------------
+
+    def sign_digest(
+        self,
+        key_id: str,
+        digest: bytes,
+        *,
+        caller_id: Optional[str] = None,
+    ) -> str:
+        """
+        Sign a pre-computed 32-byte digest directly, without any further hashing.
+
+        This is the correct entry point for Ethereum signing, where the digest
+        has already been hashed with Keccak-256 (not SHA-256). Passing a
+        Keccak-256 digest to the regular sign() would cause a double-hash
+        (SHA-256 applied to the already-hashed digest), producing an incorrect
+        Ethereum signature.
+
+        Only supported for secp256k1 keys. Returns a hex-encoded DER ECDSA
+        signature, which can be converted to Ethereum's 65-byte (r||s||v)
+        format using hsm.ethereum.der_to_eth_sig().
+
+        Parameters
+        ----------
+        key_id : str
+            The secp256k1 key to sign with.
+        digest : bytes
+            Exactly 32 bytes — the Keccak-256 (or other) pre-computed digest.
+        caller_id : str, optional
+            Caller identity for audit logging and ACL enforcement.
+
+        Returns
+        -------
+        str
+            Hex-encoded DER ECDSA signature.
+
+        Raises
+        ------
+        ValueError
+            If the key is not ec-secp256k1, or the digest is not 32 bytes.
+        """
+        if len(digest) != 32:
+            raise ValueError(
+                f"PyHSM sign_digest: digest must be exactly 32 bytes, got {len(digest)}"
+            )
+
+        with self._key_lock(key_id):
+            self._assert_session()
+            _validate_key_id(key_id)
+            entry = self._store.load_key(key_id)
+
+            if entry["key_type"] != "ec-secp256k1":
+                raise ValueError(
+                    f"PyHSM sign_digest: key '{key_id}' must be ec-secp256k1, "
+                    f"got {entry['key_type']!r}. "
+                    "Ethereum digest-signing is only supported for secp256k1 keys."
+                )
+
+            self._enforce_policy(entry, "sign", caller_id)
+
+            current = next(
+                (v for v in entry["versions"] if v["version"] == entry["current_version"]),
+                None,
+            )
+            if not current:
+                raise ValueError(f"PyHSM: no current version for key '{key_id}'")
+
+            raw_pem = self._unwrap_key_data(current["key_data"])
+            pem_sec = SecureBytes(raw_pem)
+            try:
+                private_key = serialization.load_pem_private_key(
+                    bytes(pem_sec.buf), password=None
+                )
+                # Use Prehashed to skip the library's internal hashing —
+                # the digest has already been computed by the caller.
+                from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
+                from cryptography.hazmat.primitives.asymmetric import ec as _ec
+                sig = private_key.sign(
+                    digest,
+                    _ec.ECDSA(Prehashed(hashes.SHA256())),
+                )
+            finally:
+                pem_sec.zeroize()
+
+            self._store.increment_operation_count(key_id)
+            self._metrics.record_op("sign")
+            self._audit.record(
+                "sign", key_id=key_id, caller_id=caller_id, success=True,
+                extra={"signing_mode": "digest"},
+            )
+            return sig.hex()
+
+    def eth_address(self, key_id: str) -> str:
+        """
+        Derive the EIP-55 checksummed Ethereum address for a secp256k1 key.
+
+        Shortcut for:
+            from hsm.ethereum import eth_address_from_public_key
+            eth_address_from_public_key(hsm.get_public_key(key_id))
+
+        Parameters
+        ----------
+        key_id : str
+            A key generated with key_type="ec-secp256k1".
+
+        Returns
+        -------
+        str
+            "0x"-prefixed, EIP-55 checksummed 40-hex-character address.
+
+        Raises
+        ------
+        ValueError
+            If the key is not ec-secp256k1.
+        """
+        self._assert_session()
+        entry = self._store.load_key(key_id)
+        if entry["key_type"] != "ec-secp256k1":
+            raise ValueError(
+                f"PyHSM eth_address: key '{key_id}' must be ec-secp256k1, "
+                f"got {entry['key_type']!r}"
+            )
+        from .ethereum import eth_address_from_public_key
+        pub_pem = self.get_public_key(key_id)
+        return eth_address_from_public_key(pub_pem)
+
+    # ------------------------------------------------------------------
     # JWK Import / Export (RFC 7517)
     # ------------------------------------------------------------------
 

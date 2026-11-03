@@ -294,6 +294,82 @@ def cmd_license(args) -> None:
     hsm.close_session()
 
 
+def cmd_eth_sign(args) -> None:
+    """
+    Sign an Ethereum message or transaction with a secp256k1 key.
+
+    Modes
+    -----
+    --personal   : EIP-191 personal_sign (MetaMask-compatible).
+                   The message string is prefixed and Keccak-256 hashed.
+    --tx         : EIP-1559 transaction signing.
+                   --tx-file must point to a JSON file with transaction fields.
+    --digest     : Sign a raw 32-byte hex digest directly (advanced use).
+
+    Output
+    ------
+    Prints a JSON object with:
+      "address"   : EIP-55 checksummed Ethereum address of the signer
+      "signature" : 65-byte Ethereum signature hex (r||s||v), no 0x prefix
+      "v"         : recovery identifier (27 or 28)
+    """
+    from hsm.ethereum import (
+        eip191_personal_sign_hash,
+        eip1559_transaction_hash,
+        der_to_eth_sig,
+    )
+
+    hsm = get_hsm(args)
+
+    # Determine message hash based on mode
+    if args.personal:
+        message = args.personal
+        msg_hash = eip191_personal_sign_hash(message)
+    elif args.tx_file:
+        with open(args.tx_file) as f:
+            tx = json.load(f)
+        msg_hash = eip1559_transaction_hash(tx)
+    elif args.digest:
+        digest_hex = args.digest.lstrip("0x")
+        if len(digest_hex) != 64:
+            print("Error: --digest must be exactly 32 bytes (64 hex chars)", file=sys.stderr)
+            hsm.close_session()
+            sys.exit(1)
+        msg_hash = bytes.fromhex(digest_hex)
+    else:
+        print("Error: one of --personal, --tx-file, or --digest is required", file=sys.stderr)
+        hsm.close_session()
+        sys.exit(1)
+
+    # Sign the 32-byte digest directly (no extra hashing)
+    der_hex = hsm.sign_digest(args.key_id, msg_hash)
+    pub_pem = hsm.get_public_key(args.key_id)
+    address = hsm.eth_address(args.key_id)
+
+    # Convert DER → Ethereum 65-byte (r||s||v)
+    eth_sig = der_to_eth_sig(der_hex, msg_hash, pub_pem)
+    v = eth_sig[-2:]  # last byte as hex
+    v_int = int(v, 16)
+
+    result = {
+        "address": address,
+        "signature": "0x" + eth_sig,
+        "v": v_int,
+        "r": "0x" + eth_sig[:64],
+        "s": "0x" + eth_sig[64:128],
+    }
+    print(json.dumps(result, indent=2))
+    hsm.close_session()
+
+
+def cmd_eth_address(args) -> None:
+    """Print the Ethereum address for a secp256k1 key."""
+    hsm = get_hsm(args)
+    address = hsm.eth_address(args.key_id)
+    print(address)
+    hsm.close_session()
+
+
 def cmd_audit(args) -> None:
     hsm = get_hsm(args)
     audit = hsm.get_audit_log()
@@ -441,6 +517,35 @@ def main() -> None:
     # license
     lic = sub.add_parser("license", parents=[common], help="Show active license status")
     lic.set_defaults(func=cmd_license)
+    # eth-sign
+    eth = sub.add_parser(
+        "eth-sign", parents=[common],
+        help="Sign an Ethereum message or transaction with a secp256k1 key",
+    )
+    eth.add_argument("key_id", help="secp256k1 key ID to sign with")
+    eth_mode = eth.add_mutually_exclusive_group(required=True)
+    eth_mode.add_argument(
+        "--personal", metavar="MESSAGE",
+        help="Sign a human-readable message (EIP-191 personal_sign)",
+    )
+    eth_mode.add_argument(
+        "--tx-file", metavar="JSON_FILE",
+        help="Sign an EIP-1559 transaction from a JSON file",
+    )
+    eth_mode.add_argument(
+        "--digest", metavar="HEX32",
+        help="Sign a raw 32-byte digest (64 hex chars, no 0x prefix required)",
+    )
+    eth.set_defaults(func=cmd_eth_sign)
+
+    # eth-address
+    etha = sub.add_parser(
+        "eth-address", parents=[common],
+        help="Print the Ethereum address for a secp256k1 key",
+    )
+    etha.add_argument("key_id")
+    etha.set_defaults(func=cmd_eth_address)
+
     # audit
     aud = sub.add_parser("audit", parents=[common], help="Inspect or verify the audit log")
     aud.add_argument("--verify", action="store_true", help="Verify HMAC chain integrity")
