@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vectorguard-pyhsm"
-version = "2.3.6"
+version = "2.3.7"
 description = "Production-grade software Key Management Service (KMS) — key lifecycle, authenticated encryption, digital signing, and tamper-evident audit logging."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -39,9 +39,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pavondunbar/PyHSM"
-Repository = "https://github.com/pavondunbar/PyHSM"
-Issues = "https://github.com/pavondunbar/PyHSM/issues"
+Homepage = "https://github.com/VectorGuard-Labs/PyHSM"
+Repository = "https://github.com/VectorGuard-Labs/PyHSM"
+Issues = "https://github.com/VectorGuard-Labs/PyHSM/issues"
 
 [project.scripts]
 vectorguard-pyhsm = "cli:main"

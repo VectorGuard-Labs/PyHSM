@@ -2,6 +2,76 @@
 
 ## Changelog
 
+### v2.3.7 (2026-11-02)
+
+**Repository moved to VectorGuard-Labs; documentation refresh**
+
+Repository: **https://github.com/VectorGuard-Labs/PyHSM**
+
+All `*.md` files updated to reflect changes from v2.3.2 through v2.3.6.
+`pyproject.toml` URLs updated. No code changes.
+
+---
+
+### v2.3.6 (2026-11-02)
+
+**Ethereum / EVM blockchain signing integration**
+
+New module `hsm/ethereum.py` provides a complete Ethereum signing stack built on PyHSM's existing secp256k1 ECDSA signing — no third-party blockchain libraries required:
+- `keccak256()` — Ethereum Keccak-256 hash (pre-standardisation, differs from Python's `hashlib.sha3_256`)
+- `eth_address_from_public_key()` — secp256k1 PEM → EIP-55 checksummed Ethereum address
+- `eip191_personal_sign_hash()` — EIP-191 personal_sign prefix hashing (MetaMask-compatible)
+- `eip1559_transaction_hash()` — EIP-1559 type-2 transaction RLP encoding + Keccak-256 hash
+- `der_to_eth_sig()` — DER ECDSA → 65-byte Ethereum `r ‖ s ‖ v` format with recovery identifier
+- `verify_eth_sig()` — verify 65-byte sig via address recovery
+
+New `PyHSM` methods:
+- `sign_digest(key_id, digest)` — sign a 32-byte pre-computed digest without re-hashing
+- `eth_address(key_id)` — derive EIP-55 address for a secp256k1 key
+
+New CLI subcommands: `eth-sign --personal / --tx-file / --digest`, `eth-address`
+
+44 new tests across 7 categories, verified against known Keccak-256 and EIP-55 vectors.
+
+---
+
+### v2.3.5 (2026-11-02)
+
+**Cross-process audit log integration tests**
+
+6 integration tests using subprocess invocations prove that audit log HMAC verification works across separate OS process executions — not just within a single in-memory `AuditLog` object. Each test runs the CLI as two or more fresh subprocesses; process B independently re-derives the audit HMAC key from the master password and on-disk keystore salt, then verifies the chain written by process A.
+
+---
+
+### v2.3.4 (2026-11-02)
+
+**`verify_across_rotations()` bug fix; adversarial test expansion**
+
+- **Bug fix (audit integrity):** `verify_across_rotations()` was resetting the HMAC chain anchor to `"0"*64` at the start of each rotated file instead of continuing from the prior file's seal HMAC. This made cross-rotation verification always fail — deleted rotated log files were not detectable. Fixed.
+- **New tests:** `TestAsymmetricKeyConstraintAttacks` (12 tests — all key-type misuse scenarios) and `TestKeySeparationVerification` (7 tests — proves HKDF produces independent enc/mac/kek/audit keys).
+- **`CHANGELOG.md`** created.
+
+---
+
+### v2.3.3 (2026-11-02)
+
+**IPC adversarial tests, Hypothesis property tests, lifecycle tests; IPC deadlock fixes**
+
+- IPC server deadlock fixed (non-reentrant lock re-acquisition caused all crypto operations to hang).
+- IPC server signal-handler crash fixed (signal.signal only works on main thread).
+- 20 IPC adversarial tests, 18 Hypothesis property-based tests, 21 lifecycle/recovery tests.
+
+---
+
+### v2.3.2 (2026-11-02)
+
+**Error message fix; adversarial test suite**
+
+- `"TAMPER DETECTED: HMAC verification failed"` → `"Keystore authentication failed. The master password may be incorrect, or the keystore may have been modified."` — prevents wrong-password being misconstrued as tampering.
+- 80 adversarial tests, `ADVERSARIAL_TESTING.md` report.
+
+---
+
 ### v2.3.1 (2026-10-29)
 
 **Security hardening: thread safety, constant-time comparisons, RSA import validation, and stronger KATs**
@@ -282,7 +352,7 @@ Most applications that need key management face a difficult choice: implement it
 - Concurrency stress-tested (16 threads, data integrity proofs)
 - 80%+ code coverage enforced in CI (73%+ for Python layer as of v2.3.1)
 - Reproducible builds via pinned dependency lockfile
-- 274 tests across both layers (180 Python + 94 TypeScript)
+- 391 Python tests (adversarial, IPC adversarial, property-based, lifecycle/recovery, Ethereum, cross-process audit integration)
 
 ---
 
@@ -1034,7 +1104,103 @@ Intermediate share buffers are zeroized from memory after reconstruction in both
 
 PyHSM can serve as a self-hosted signing infrastructure for Ethereum, Bitcoin, Solana, and other blockchain networks. The private key is imported once, encrypted at rest, and never exposed again — all signing happens through PyHSM.
 
+### Ethereum / EVM (secp256k1) — Full Integration
+
+As of v2.3.6, PyHSM includes a complete Ethereum signing module (`hsm/ethereum.py`) and a dedicated `eth-sign` CLI subcommand. No third-party blockchain libraries are required.
+
+```python
+from hsm import PyHSM
+from hsm.ethereum import eip191_personal_sign_hash, eip1559_transaction_hash, der_to_eth_sig, verify_eth_sig
+
+hsm = PyHSM("/secure/keystore.enc", master_password="strong-pw")
+hsm.generate_key("eth-wallet", "ec-secp256k1")
+
+# Derive the Ethereum address (EIP-55 checksummed)
+address = hsm.eth_address("eth-wallet")
+# → "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+
+# Sign a personal_sign message (MetaMask / eth_sign)
+msg_hash = eip191_personal_sign_hash("Authorise withdrawal: 1 ETH")
+der_hex = hsm.sign_digest("eth-wallet", msg_hash)
+eth_sig = der_to_eth_sig(der_hex, msg_hash, hsm.get_public_key("eth-wallet"))
+# eth_sig is 65-byte hex: r (32) || s (32) || v (27 or 28)
+
+# Verify the signature recovers to the correct address
+assert verify_eth_sig(msg_hash, eth_sig, address)
+
+# Sign an EIP-1559 transaction
+tx = {
+    "chain_id": 1, "nonce": 7,
+    "max_priority_fee_per_gas": 1_500_000_000,
+    "max_fee_per_gas": 30_000_000_000,
+    "gas_limit": 21_000,
+    "to": "0xd3CdA913deB6f4967b2Ef3aa68f5A843F88f2d07",
+    "value": 1_000_000_000_000_000_000,
+    "data": b"", "access_list": [],
+}
+tx_hash = eip1559_transaction_hash(tx)
+der_hex = hsm.sign_digest("eth-wallet", tx_hash)
+eth_sig = der_to_eth_sig(der_hex, tx_hash, hsm.get_public_key("eth-wallet"))
+```
+
+CLI usage:
+
+```bash
+# Derive address
+vectorguard-pyhsm --store /secure/keystore.enc eth-address eth-wallet
+
+# Sign a personal message (EIP-191)
+vectorguard-pyhsm --store /secure/keystore.enc eth-sign eth-wallet \
+    --personal "Authorise withdrawal: 1 ETH"
+# → {"address": "0x5aAeb6...", "signature": "0x...", "v": 27, "r": "0x...", "s": "0x..."}
+
+# Sign an EIP-1559 transaction from a JSON file
+vectorguard-pyhsm --store /secure/keystore.enc eth-sign eth-wallet --tx-file tx.json
+
+# Sign a raw 32-byte digest
+vectorguard-pyhsm --store /secure/keystore.enc eth-sign eth-wallet --digest <hex32>
+```
+
 ### Step 1: Import an Existing Private Key (One-Time)
+
+```python
+from hsm import PyHSM
+import base64
+
+def b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+# Raw private key bytes
+privkey_bytes = bytes.fromhex("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+
+# Derive public key coordinates
+from cryptography.hazmat.primitives.asymmetric import ec as _ec
+priv_int = int.from_bytes(privkey_bytes, "big")
+priv_key = _ec.derive_private_key(priv_int, _ec.SECP256K1())
+pub_nums = priv_key.public_key().public_numbers()
+
+# Import into PyHSM — key is now AES-KWP double-encrypted at rest
+hsm = PyHSM("/secure/keystore.enc", master_password="strong-pw")
+hsm.import_key_jwk("eth-wallet", {
+    "kty": "EC", "crv": "secp256k1",
+    "x": b64url(pub_nums.x.to_bytes(32, "big")),
+    "y": b64url(pub_nums.y.to_bytes(32, "big")),
+    "d": b64url(privkey_bytes),
+})
+hsm.close_session()
+```
+
+### Step 2: Ed25519 (Solana / Cosmos)
+
+```python
+hsm = PyHSM("/secure/keystore.enc", master_password="strong-pw")
+hsm.generate_key("sol-wallet", "ed25519")
+
+signature_hex = hsm.sign("sol-wallet", transaction_bytes, caller_id="sol-service")
+signature_bytes = bytes.fromhex(signature_hex)  # 64 bytes, use directly with Solana SDK
+```
+
+### TypeScript (Process Isolation)
 
 ```python
 from hsm import PyHSM

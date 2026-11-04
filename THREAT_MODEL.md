@@ -1,6 +1,6 @@
 # PyHSM Threat Model
 
-**Last updated:** v2.3.1 (2026-10-29)
+**Last updated:** v2.3.7 (2026-11-02)
 
 This document defines the security boundaries, assumptions, and threat actors
 that PyHSM is designed to defend against — and explicitly states what is out of scope.
@@ -244,6 +244,8 @@ PyHSM acknowledges this limitation in its scope statement.
 | Forged Shamir shares | N/A (hardware ceremony) | Protected (per-share HMAC-SHA256, 256-bit, index-bound, v2.2.0) |
 | Deleted audit log files | Protected (hardware audit journal) | Protected (rotation seals detect file deletion, v2.2.0) |
 | KAT regression in crypto library | Protected (certified module) | Protected (10 primitive KATs at startup; RSA-PSS + Ed25519 with cross-key checks, v2.3.1) |
+| Ethereum/EVM transaction signing | N/A | Protected (EIP-191/EIP-1559 signing, EIP-55 address derivation, recovery identifier, address verification — v2.3.6) |
+
 | License token forgery | N/A (not applicable) | Protected (RS256 / RSA-2048 signature verification, embedded public key, v2.3.0) |
 
 PyHSM is appropriate for environments where software key management is acceptable.

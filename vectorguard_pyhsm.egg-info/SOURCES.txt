@@ -6,6 +6,7 @@ hsm/__init__.py
 hsm/audit.py
 hsm/backends.py
 hsm/core.py
+hsm/ethereum.py
 hsm/ipc_client.py
 hsm/ipc_server.py
 hsm/jwk.py
@@ -23,6 +24,7 @@ tests/test_adversarial.py
 tests/test_audit_integration.py
 tests/test_cli.py
 tests/test_concurrency.py
+tests/test_ethereum.py
 tests/test_ipc_adversarial.py
 tests/test_lifecycle_recovery.py
 tests/test_property_based.py

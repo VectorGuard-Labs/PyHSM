@@ -2,10 +2,179 @@
 
 All security-relevant changes are cross-referenced in [SECURITY.md](SECURITY.md).
 Versions follow [Semantic Versioning](https://semver.org/).
+Repository: https://github.com/VectorGuard-Labs/PyHSM
+
+---
+
+## [2.3.7] — 2026-11-02
+
+### Changed
+- Repository moved to **https://github.com/VectorGuard-Labs/PyHSM**.
+  All documentation, `pyproject.toml` URLs, systemd unit references, and
+  security advisory links updated to reflect the new organisation.
+- All `*.md` files updated to document changes from v2.3.2 through v2.3.6:
+  Ethereum integration, cross-process audit integration tests, AT-AS and
+  AT-KS-EX adversarial test categories, CHANGELOG creation, and audit chain
+  bug fix.
+
+---
+
+## [2.3.6] — 2026-11-02
+
+### Added
+- `hsm/ethereum.py` — Ethereum / EVM blockchain signing module:
+  - `keccak256()` — Ethereum Keccak-256 hash (pre-standardisation, not SHA3-256)
+  - `eth_address_from_public_key()` — secp256k1 PEM → EIP-55 checksummed address
+  - `eip191_personal_sign_hash()` — EIP-191 personal_sign prefix hashing (MetaMask-compatible)
+  - `eip1559_transaction_hash()` — EIP-1559 type-2 transaction RLP encoding + Keccak-256 hash
+  - `der_to_eth_sig()` — DER ECDSA → 65-byte Ethereum `r ‖ s ‖ v` with recovery identifier
+  - `verify_eth_sig()` — verify 65-byte Ethereum sig against expected address
+  - `_eip55_checksum()` — EIP-55 mixed-case address checksum
+  - `_recover_public_key()` — SEC 1 v2.0 §4.1.6 secp256k1 key recovery
+  - Minimal pure-Python RLP encoder for EIP-1559 (no external blockchain deps)
+- `PyHSM.sign_digest(key_id, digest)` — sign a pre-computed 32-byte Keccak-256
+  digest directly without re-hashing (uses `cryptography.Prehashed`)
+- `PyHSM.eth_address(key_id)` — derive EIP-55 Ethereum address for a secp256k1 key
+- CLI subcommands `eth-sign` and `eth-address`
+- `tests/test_ethereum.py` — 44 tests across 7 categories (ETH-KV through ETH-ERR)
+- `pycryptodome>=3.20.0` added to declared dependencies (Keccak-256)
+
+### Fixed
+- `cli.py` indentation errors from prior str_replace operations
+- `lstrip("0x")` → explicit `[2:]` slice for address/data hex normalisation
+  (`lstrip` strips individual characters, not the prefix string)
+
+---
+
+## [2.3.5] — 2026-11-02
+
+### Added
+- `tests/test_audit_integration.py` — 6 cross-process audit log integration
+  tests proving that audit verification works across separate OS process
+  executions, not just within a single in-memory `AuditLog` object:
+  - AI-01: clean log verifies in a fresh process (HMAC key re-derived from disk)
+  - AI-02: tampered entry detected after process A exits (exit 1, "CORRUPTED")
+  - AI-03: chain accumulated across many separate process invocations verifies
+  - AI-04: tampered entry reports exact sequence number in error output
+  - AI-05: key rotation, encrypt, sign all produce cross-process verifiable chains
+  - AI-06: audit log survives session close and reopen; entries readable in new process
+
+---
+
+## [2.3.4] — 2026-11-02
+
+### Fixed
+- `audit.py` `verify_across_rotations()`: HMAC chain anchor reset bug.
+  The verifier now initialises `current_prev` to `prev_seal_hmac` when
+  entering each subsequent file, matching how `_rotate()` writes the
+  `rotationOpen` entry. Previously reset to `"0"*64`, making cross-rotation
+  verification always fail after the first rotation. Three previously-xfailed
+  lifecycle tests now pass.
+- `tests/test_lifecycle_recovery.py`: Removed `xfail` markers from LC-AL-01,
+  LC-AL-03, and LC-AL-04.
+- `tests/test_property_based.py`: Fixed intermittent failure in
+  `test_fewer_than_threshold_shares_never_recover_secret` by narrowing the
+  Hypothesis strategy to `k≥3`.
+
+### Added
+- `tests/test_adversarial.py`: `TestAsymmetricKeyConstraintAttacks` (AT-AS,
+  12 tests) covering all key-type misuse scenarios.
+- `tests/test_adversarial.py`: `TestKeySeparationVerification` (AT-KS-EX,
+  7 tests) proving enc_key ≠ mac_key ≠ kek, salt/password participation,
+  `SecureBytes` zeroization, in-place zeroing, and key material zeroed on close.
+- `CHANGELOG.md` — this file.
 
 ---
 
 ## [2.3.3] — 2026-11-02
+
+### Fixed
+- `ipc_server.py` deadlock — `_dispatch()` acquired per-key and global locks
+  then called PyHSM methods that acquire the same locks (non-reentrant
+  deadlock). Every IPC operation silently hung. Removed redundant outer locks.
+- `ipc_server.py` signal crash — `signal.signal()` only works on the main
+  thread. Added `threading.current_thread() is threading.main_thread()` guard.
+- `ipc_server.py` — Added `conn_timeout_s` parameter (default 30 s).
+
+### Added
+- `tests/test_ipc_adversarial.py` — 20 IPC adversarial tests (IPC-AU through IPC-LF).
+- `tests/test_property_based.py` — 18 Hypothesis property-based tests (PB-JW through PB-AU).
+- `tests/test_lifecycle_recovery.py` — 21 lifecycle/recovery tests (LC-ST through LC-CC);
+  3 were marked `xfail` for audit chain bug (fixed in 2.3.4).
+- `hypothesis>=6.100.0` added to dev dependencies.
+
+### Discovered
+- `audit.py` `verify_across_rotations()` HMAC chain anchor bug (fixed in 2.3.4).
+
+---
+
+## [2.3.2] — 2026-11-02
+
+### Fixed
+- `hsm/storage.py`: Misleading error message on wrong master password.
+  `"TAMPER DETECTED: HMAC verification failed"` → `"Keystore authentication
+  failed. The master password may be incorrect, or the keystore may have been
+  modified. No key material was released."`
+- `tests/test_pyhsm.py`: Updated match string in `test_tamper_detection_flipped_byte`.
+
+### Added
+- `tests/test_adversarial.py` — 80 adversarial tests across 11 categories (AT-KS through AT-PF).
+- `ADVERSARIAL_TESTING.md` — adversarial test report.
+
+---
+
+## [2.3.1] — 2026-10-29
+
+### Fixed (security)
+- `RateLimiter` thread-safety (High) — `threading.Lock` on all methods.
+- Audit log `verify()` timing oracle (Medium) — `hmac.compare_digest()`.
+- Shamir legacy checksum timing oracle (Medium) — `hmac.compare_digest()`.
+- JWK RSA import size (Medium) — allowlist `{2048, 4096}`.
+- Ed25519 KAT wrong-key rejection (Low).
+- RSA-PSS KAT fixed embedded key + cross-key + tamper checks (Low).
+
+---
+
+## [2.3.0] — 2026-10-15
+
+### Added
+- Offline RS256 JWT commercial license token verification.
+- `license` CLI subcommand; `get_license_info()` API method.
+- Per-tier key limits enforced at `generate_key()`.
+
+---
+
+## [2.2.0] — 2026-09-20
+
+### Fixed (security)
+- IPC unauthenticated by default (High) — `--ipc-secret` mandatory.
+- IPC global lock DoS (Medium) — per-key locking, 30 s connection timeout.
+- Shamir 4-byte checksum (Medium) — per-share HMAC-SHA256.
+- KATs missing 6 primitives (Medium) — 10 KATs total.
+- Audit chain not spanning rotations (Low) — `rotationSeal`/`rotationOpen`.
+
+---
+
+## [2.1.0] — 2026-08-10
+
+### Added
+- IPC process-isolation server/client, secp256k1, Ed25519, EC P-384/P-521,
+  JWK import/export, backup/restore, key search, auto-rotation, OTLP metrics.
+
+---
+
+## [2.0.0] — 2026-07-01
+
+Major release. Argon2id required, AES-KWP per-key wrapping, HKDF key
+separation, atomic writes, per-key policies, rate limiting, HMAC audit log,
+session timeout, SecureBytes zeroization.
+
+---
+
+## [1.x] — Prior to 2026-07-01
+
+End-of-life. No security patches. Upgrade to v2.0.0 or later.
+
 
 ### Added
 - `tests/test_ipc_adversarial.py` — 20 IPC adversarial tests across 5 categories:

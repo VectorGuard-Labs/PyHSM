@@ -1,12 +1,12 @@
 # PyHSM Adversarial Testing Report
 
 **Project:** PyHSM  
-**Version tested:** v2.3.4 (`main` branch)  
+**Version tested:** v2.3.7 (`main` branch at https://github.com/VectorGuard-Labs/PyHSM)  
 **Date:** November 2, 2026  
 **Tested by:** VectorGuard Labs internal review  
 **Test files:** `tests/test_adversarial.py`, `tests/test_ipc_adversarial.py`,
 `tests/test_lifecycle_recovery.py`, `tests/test_property_based.py`  
-**Result: 341 / 341 tests passed (0 xfail)**
+**Result: 391 / 391 tests passed (0 xfail)**
 
 ---
 
@@ -80,6 +80,32 @@ python -m pytest tests/ --no-cov
 | Crash-safe persistence | LC-IW | 3 | ✅ All passed |
 | Concurrent operations | LC-CC | 4 | ✅ All passed |
 | **Subtotal** | | **25** | **✅ 25 / 25** |
+
+### `tests/test_ethereum.py` — Ethereum / EVM blockchain signing
+
+| Category | Code | Tests | Result |
+|----------|------|-------|--------|
+| Known-vector tests | ETH-KV | 5 | ✅ All passed |
+| Keccak-256 and EIP-191 hashing | ETH-KS | 6 | ✅ All passed |
+| Address derivation | ETH-AD | 6 | ✅ All passed |
+| secp256k1 digest signing | ETH-SG | 9 | ✅ All passed |
+| EIP-1559 transaction signing | ETH-TX | 6 | ✅ All passed |
+| Signature verification | ETH-VF | 3 | ✅ All passed |
+| CLI integration | ETH-CLI | 6 | ✅ All passed |
+| Error cases | ETH-ERR | 3 | ✅ All passed |
+| **Subtotal** | | **44** | **✅ 44 / 44** |
+
+### `tests/test_audit_integration.py` — Cross-process audit integration
+
+| Test | What's proved | Result |
+|------|--------------|--------|
+| AI-01 | Clean log verifies in a fresh process | ✅ |
+| AI-02 | Tampered entry detected after process A exits | ✅ |
+| AI-03 | Chain accumulated across many process invocations | ✅ |
+| AI-04 | Tampered entry reports exact sequence number | ✅ |
+| AI-05 | Key rotation, encrypt, sign produce cross-process verifiable chains | ✅ |
+| AI-06 | Audit log survives session close and reopen | ✅ |
+| **Subtotal** | | **✅ 6 / 6** |
 
 ### `tests/test_property_based.py` — Hypothesis property-based tests
 

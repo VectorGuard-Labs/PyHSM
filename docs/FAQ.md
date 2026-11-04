@@ -14,7 +14,7 @@ PyHSM is a focused key management library. You `pip install` it, import it in yo
 
 **Use PyHSM if:** You need to encrypt data or sign transactions from your application with proper key lifecycle management — without the operational overhead.
 
-Additional distinction: Vault's Transit engine doesn't support secp256k1. If you're signing Ethereum or Bitcoin transactions, Vault can't do it natively. PyHSM can.
+Additional distinction: Vault's Transit engine doesn't support secp256k1. If you're signing Ethereum or Bitcoin transactions, Vault can't do it natively. PyHSM can — and as of v2.3.6 includes a complete Ethereum signing stack: Keccak-256, EIP-191 personal_sign, EIP-1559 transaction hashing, recovery identifier computation, and EIP-55 address derivation.
 
 ---
 
@@ -342,3 +342,100 @@ hsm.verifyBackup(path);
 Backups are atomic (temp file + rename), timestamped, and written with mode `0o600`. The backup file is the raw encrypted keystore — no decryption or re-encryption occurs. Verification confirms HMAC integrity and successful decryption without loading keys into memory.
 
 Store backups on a separate volume or off-host. The backup is useless without the master password, so it's safe to store in less-trusted locations than the live keystore.
+
+---
+
+## How do I sign Ethereum transactions with PyHSM?
+
+As of v2.3.6, PyHSM includes a complete Ethereum signing module (`hsm/ethereum.py`) that handles the entire signing stack — no third-party blockchain library required.
+
+**1. Generate or import a secp256k1 key:**
+
+```python
+hsm = PyHSM("/secure/keystore.enc", master_password="strong-pw")
+hsm.generate_key("eth-wallet", "ec-secp256k1")
+address = hsm.eth_address("eth-wallet")  # EIP-55 checksummed
+```
+
+**2. Sign a personal_sign message (MetaMask-compatible):**
+
+```python
+from hsm.ethereum import eip191_personal_sign_hash, der_to_eth_sig
+
+msg_hash = eip191_personal_sign_hash("Approve transfer")
+der_hex  = hsm.sign_digest("eth-wallet", msg_hash)
+eth_sig  = der_to_eth_sig(der_hex, msg_hash, hsm.get_public_key("eth-wallet"))
+# eth_sig = 65 bytes: r (32) || s (32) || v (27 or 28)
+```
+
+**3. Sign an EIP-1559 transaction:**
+
+```python
+from hsm.ethereum import eip1559_transaction_hash, der_to_eth_sig
+
+tx_hash = eip1559_transaction_hash({
+    "chain_id": 1, "nonce": 0,
+    "max_priority_fee_per_gas": 1_500_000_000,
+    "max_fee_per_gas": 30_000_000_000,
+    "gas_limit": 21_000,
+    "to": "0xRecipientAddress...",
+    "value": 1_000_000_000_000_000_000,
+    "data": b"", "access_list": [],
+})
+der_hex = hsm.sign_digest("eth-wallet", tx_hash)
+eth_sig = der_to_eth_sig(der_hex, tx_hash, hsm.get_public_key("eth-wallet"))
+```
+
+**4. Verify a signature:**
+
+```python
+from hsm.ethereum import verify_eth_sig
+assert verify_eth_sig(msg_hash, eth_sig, address)
+```
+
+**Via CLI:**
+
+```bash
+# Derive address
+vectorguard-pyhsm --store keystore.enc eth-address eth-wallet
+
+# Sign personal message
+vectorguard-pyhsm --store keystore.enc eth-sign eth-wallet \
+    --personal "Approve transfer"
+
+# Sign EIP-1559 transaction
+vectorguard-pyhsm --store keystore.enc eth-sign eth-wallet --tx-file tx.json
+```
+
+**Why `sign_digest()` instead of `sign()`?**
+
+PyHSM's `sign()` applies an internal SHA-256 hash (via `ECDSA(SHA256())`). Ethereum uses Keccak-256, not SHA-256. If you passed a Keccak-256 digest to `sign()`, it would SHA-256 the already-hashed digest — a double-hash producing an incorrect Ethereum signature. `sign_digest()` uses `ECDSA(Prehashed())` to sign the exact bytes you provide without any additional hashing.
+
+---
+
+## What is the difference between sign() and sign_digest()?
+
+`sign(key_id, message)` — the standard signing method. For secp256k1 keys, it applies `ECDSA(SHA256())`, hashing the message with SHA-256 before signing. This is correct for generic ECDSA applications.
+
+`sign_digest(key_id, digest)` — Ethereum-specific. Signs a 32-byte pre-computed digest directly without any further hashing. Only supported for `ec-secp256k1` keys. Use this when you have already hashed the message with Keccak-256 (or any other hash) and want PyHSM to sign the raw digest.
+
+For `verify()`, PyHSM uses the stored public key and `ECDSA(SHA256())`. To verify an Ethereum signature produced by `sign_digest()`, use `verify_eth_sig()` from `hsm.ethereum`, which uses the secp256k1 recovery algorithm rather than the standard ECDSA verification path.
+
+---
+
+## How many tests does PyHSM have?
+
+As of v2.3.7: **391 Python tests** across 8 test files:
+
+| File | Tests | Category |
+|------|-------|----------|
+| `tests/test_pyhsm.py` | 180 | Core unit tests |
+| `tests/test_adversarial.py` | 99 | Adversarial tests (AT-KS through AT-KS-EX) |
+| `tests/test_ipc_adversarial.py` | 20 | IPC boundary adversarial tests |
+| `tests/test_lifecycle_recovery.py` | 21 | Lifecycle / recovery tests |
+| `tests/test_property_based.py` | 18 | Hypothesis property-based tests |
+| `tests/test_ethereum.py` | 44 | Ethereum/EVM signing tests |
+| `tests/test_audit_integration.py` | 6 | Cross-process audit integration tests |
+| `tests/test_cli.py` + `test_concurrency.py` | 38 | CLI and concurrency tests |
+
+Run the full suite: `python -m pytest tests/ --no-cov`

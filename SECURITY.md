@@ -12,8 +12,24 @@ v1.x is no longer supported. Upgrade to v2.3.0 or later.
 
 ---
 
-## Changes in v2.3.0
+## Changes in v2.3.2 – v2.3.7 (2026-11-02)
 
+| Change | Category | Details |
+|---|---|---|
+| Repository moved to VectorGuard-Labs/PyHSM | Organisational | All URLs, links, and references updated |
+| Ethereum / EVM signing integration (`hsm/ethereum.py`) | Feature | `keccak256()`, `eth_address_from_public_key()`, `eip191_personal_sign_hash()`, `eip1559_transaction_hash()`, `der_to_eth_sig()`, `verify_eth_sig()`; new `sign_digest()` and `eth_address()` on `PyHSM`; `eth-sign` and `eth-address` CLI subcommands; `pycryptodome` dependency |
+| `verify_across_rotations()` HMAC anchor bug fixed | Security | The verifier was resetting `current_prev` to `"0"*64` per file; rotated-file deletion was undetectable. Fixed to continue chain from previous file's seal HMAC |
+| Cross-process audit integration tests | Testing | 6 subprocess-based tests proving audit verification works across OS process boundaries |
+| Adversarial test suite (AT-AS, AT-KS-EX) | Testing | 12 asymmetric key constraint tests; 7 key-separation verification tests |
+| IPC server deadlock fix | Bug | `_dispatch()` was re-acquiring non-reentrant locks already held by PyHSM core |
+| IPC server signal handler fix | Bug | `signal.signal()` only works on main thread; added thread-identity guard |
+| Error message: wrong master password | UX | "TAMPER DETECTED: HMAC verification failed" → "Keystore authentication failed" |
+| Hypothesis property-based tests | Testing | 18 property tests covering JWK, ciphertext, Shamir, encrypt/decrypt, key ID, audit invariants |
+| Lifecycle and recovery tests | Testing | 25 lifecycle tests: session timeout, key rotation, backup, audit rotation, concurrency |
+| `CHANGELOG.md` created | Documentation | Full version history from v1.x to current |
+| `ADVERSARIAL_TESTING.md` created and expanded | Documentation | 341-test report with remediation history |
+
+## Changes in v2.3.0
 | Change | Category | Details |
 |---|---|---|
 | Runtime license notice at every `PyHSM()` instantiation | Notice | Logged at INFO with `event: license_notice`; establishes constructive notice of AGPL-3.0 obligations |
@@ -64,7 +80,7 @@ The following vulnerabilities were identified in an internal security audit and 
 Instead, report vulnerabilities privately via one of:
 
 - **Email:** security@vectorguardlabs.com
-- **GitHub Security Advisories:** [Report a vulnerability](https://github.com/pavondunbar/PyHSM/security/advisories/new)
+- **GitHub Security Advisories:** [Report a vulnerability](https://github.com/VectorGuard-Labs/PyHSM/security/advisories/new)
 
 Include the following in your report:
 

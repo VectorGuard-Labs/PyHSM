@@ -269,7 +269,7 @@ Create `/etc/systemd/system/pyhsm.service`:
 ```ini
 [Unit]
 Description=PyHSM Key Management Service
-Documentation=https://github.com/pavondunbar/PyHSM
+Documentation=https://github.com/VectorGuard-Labs/PyHSM
 After=network.target
 Requires=network.target
 
@@ -343,7 +343,7 @@ repository root.
 
 ```bash
 # Build
-docker build -t pyhsm:2.1.0 .
+docker build -t pyhsm:2.3.7 .
 
 # Run with hardening flags
 docker run \
@@ -360,7 +360,7 @@ docker run \
     -v /var/lib/pyhsm:/data:Z \
     -v /run/secrets/pyhsm-password:/run/secrets/pyhsm-password:ro,Z \
     -v /var/log/pyhsm:/var/log/pyhsm:Z \
-    pyhsm:2.1.0
+    pyhsm:2.3.7
 ```
 
 Key flags explained:

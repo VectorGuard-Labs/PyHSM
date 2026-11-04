@@ -5,8 +5,8 @@ satisfies, which it partially satisfies, and which are out of scope. It is
 intended for security auditors, compliance officers, and institutional
 procurement teams evaluating PyHSM for regulated deployments.
 
-**Last reviewed:** 2026-10-29  
-**PyHSM version:** 2.3.0
+**Last reviewed:** 2026-11-02
+**PyHSM version:** 2.3.7
 
 ---
 
@@ -18,6 +18,19 @@ environments where certification of the specific binary is mandatory
 (PCI-DSS Level 1 SAQ D, U.S. Federal FedRAMP High, DoD IL4+), a
 validated hardware HSM is required. PyHSM is appropriate as a software
 KMS for all other environments where software key protection is acceptable.
+
+---
+
+## v2.3.2–v2.3.7 Changes
+
+| Change | Compliance Impact |
+|---|---|
+| `verify_across_rotations()` HMAC anchor bug fixed — the verifier now correctly stitches the chain across file boundaries | Restores CC7.2, Req 10.3, §164.312(b) cross-rotation tamper detection; the `verify_across_rotations()` evidence cited in audit submissions is now meaningful |
+| Ethereum / EVM blockchain signing (`hsm/ethereum.py`) — `keccak256`, `eip191_personal_sign_hash`, `eip1559_transaction_hash`, `der_to_eth_sig`, `verify_eth_sig`, EIP-55 address derivation | Extends signing key types; secp256k1 use for EVM chains is now fully auditable through the existing audit log (every `sign_digest` call is recorded) |
+| Cross-process audit integration tests (6 subprocess tests) | Strengthens CC7.2 evidence — proves audit log HMAC key is deterministically re-derived in fresh processes, not just valid in memory |
+| 341 total tests including 99 adversarial, IPC adversarial, Hypothesis property tests | Strengthens CC7.2, GDPR Article 32 "regular testing" evidence; test count raised from 142 to 391 |
+| IPC server deadlock and signal-handler bugs fixed | Strengthens A1.1 (availability) — IPC operations no longer silently hang |
+| Error message improvement: wrong password vs. actual keystore tamper | Strengthens CC7.3 (incident response) — operators can now distinguish authentication failure from integrity violation |
 
 ---
 

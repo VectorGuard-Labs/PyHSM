@@ -1,8 +1,8 @@
 # PyHSM Security Policy
 
-**Version:** 2.3.0  
-**Effective Date:** 2026-10-29  
-**Owner:** PyHSM Project Maintainers  
+**Version:** 2.3.7
+**Effective Date:** 2026-11-02
+**Owner:** PyHSM Project Maintainers (VectorGuard Labs)
 
 This document is the formal security policy for the PyHSM software key
 management system. It defines the security objectives, cryptographic
@@ -49,7 +49,9 @@ No custom or novel cryptographic primitives are used.
 | Symmetric encryption (TS) | AES-256-GCM-SIV | Nonce-misuse resistant | RFC 8452 |
 | Key wrapping | AES-KWP | RFC 5649 alternative IV | RFC 5649 |
 | RSA signatures | RSA-PSS | SHA-256, MAX salt | PKCS#1 v2.2 |
-| EC signatures | ECDSA | P-256/SHA-256, P-384/SHA-384, P-521/SHA-512 | FIPS 186-5 |
+| EC signatures | ECDSA | P-256/SHA-256, P-384/SHA-384, P-521/SHA-512, secp256k1/SHA-256 | FIPS 186-5 |
+| EC signatures (Ethereum) | ECDSA secp256k1 | Keccak-256 digest (EIP-191 / EIP-1559), 65-byte `r ‖ s ‖ v` format | EIP-191, EIP-1559 |
+| Ethereum hashing | Keccak-256 | Pre-standardisation Keccak (not NIST SHA3-256) | Ethereum Yellow Paper |
 | EdDSA signatures | Ed25519 | — | RFC 8032 |
 | Password KDF | Argon2id | 64 MB, t=3, p=4, 32-byte output | RFC 9106 |
 | Password KDF (fallback) | PBKDF2-SHA256 | 480,000 iterations | NIST SP 800-132 |
@@ -256,7 +258,7 @@ with their compliance obligations. Minimum recommended retention:
 
 Report security vulnerabilities privately to the maintainers via the
 GitHub Security Advisories feature:
-`https://github.com/pavondunbar/PyHSM/security/advisories/new`
+`https://github.com/VectorGuard-Labs/PyHSM/security/advisories/new`
 
 Do **not** open a public GitHub issue for security vulnerabilities.
 
@@ -316,7 +318,7 @@ The following threats are **explicitly outside PyHSM's security boundary**:
 
 PyHSM maintains the following security testing baseline:
 
-- **Unit tests:** ≥ 73% line and branch coverage (Python layer; 142 tests as of v2.3.1)
+- **Unit tests:** ≥ 73% line and branch coverage (Python layer; 391 tests as of v2.3.7)
 - **Known-Answer Tests (KATs):** Run on every `PyHSM` instantiation via
   `run_self_tests()`. Fail-fast on any mismatch. As of v2.2.0, covers all
   10 primitives in active use: AES-256-GCM, PBKDF2-SHA256, HMAC-SHA256,
@@ -391,3 +393,20 @@ internal security audit:
 | 4 | KATs missing 6 primitives | Verification | KATs added for Argon2id, HKDF, AES-KWP, ECDSA P-256, RSA-PSS, Ed25519 |
 | 5 | Audit chain not spanning rotations | Audit integrity | `rotationSeal`/`rotationOpen` + `verify_across_rotations()` |
 | 6 | SECURITY.md listed v1.x as supported | Documentation | Corrected; v1.x marked EOL |
+
+---
+
+## Appendix: v2.3.2–v2.3.7 Changes
+
+| # | Change | Category | Details |
+|---|---|---|---|
+| 1 | Repository moved to VectorGuard-Labs/PyHSM | Organisational | All URLs updated |
+| 2 | `verify_across_rotations()` HMAC anchor bug fixed | Security (audit integrity) | Verifier now continues chain from prior file's seal HMAC; cross-rotation tamper detection was non-functional before this fix |
+| 3 | Ethereum/EVM signing module (`hsm/ethereum.py`) | Feature | Keccak-256, EIP-55 address derivation, EIP-191 personal_sign, EIP-1559 transaction signing, 65-byte sig format, recovery identifier, address verification |
+| 4 | `sign_digest()` method on `PyHSM` | API | Signs a pre-computed 32-byte digest without re-hashing; required for Ethereum where Keccak-256 (not SHA-256) is the hash function |
+| 5 | IPC server deadlock fix | Availability | Non-reentrant lock re-acquisition caused all IPC crypto operations to hang silently |
+| 6 | IPC server signal-handler guard | Correctness | `signal.signal()` restricted to main thread; background thread usage no longer crashes |
+| 7 | Wrong-password error message disambiguation | UX / Clarity | "TAMPER DETECTED" → "Keystore authentication failed" to prevent incorrect incident response |
+| 8 | Cross-process audit integration tests | Verification | 6 subprocess tests proving audit HMAC key is deterministically re-derived across process boundaries |
+| 9 | Adversarial test suite expanded (AT-AS, AT-KS-EX) | Verification | 12 asymmetric key constraint tests; 7 key-separation cryptographic property tests |
+| 10 | Total test count: 391 (up from 142 at v2.3.1) | Verification | IPC adversarial, Hypothesis property, lifecycle/recovery, Ethereum, cross-process audit |
