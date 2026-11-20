@@ -46,6 +46,7 @@ from typing import Optional
 
 import pytest
 
+from hsm.ipc_auth import sign_request
 from hsm.ipc_server import IPCServer, ALLOWED_OPERATIONS, _MSG_HEADER, _send_msg, _recv_msg
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,16 @@ def _build_auth(secret: str, request_id: str, operation: str) -> str:
 
 
 def _send_raw(sock: socket.socket, payload: dict) -> None:
+    """Send a frame. These tests were written for version-1 tokens (``_build_auth``). A payload
+    whose token is a CORRECT v1 token for its own request id and operation is a request the test
+    means to be valid, so it is re-signed with version 2 (the server refuses v1 by default). Every
+    other payload (no token, wrong secret, a token for another request id, garbage) is sent
+    exactly as written, so the attacks these tests describe are still exactly what is sent."""
+    auth = payload.get("auth")
+    if isinstance(auth, str) and auth and auth == _build_auth(
+        _IPC_SECRET, str(payload.get("request_id", "")), str(payload.get("type", ""))
+    ):
+        payload = sign_request(_IPC_SECRET.encode("utf-8"), payload)
     data = json.dumps(payload).encode("utf-8")
     sock.sendall(_MSG_HEADER.pack(len(data)) + data)
 

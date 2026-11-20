@@ -2,6 +2,33 @@
 
 ## Changelog
 
+### v2.4.0 (2026-11-20)
+
+**Breaking change to the IPC protocol.** Request authentication version 2, replay protection, kernel-verified callers, and errors that leak nothing. Upgrade servers and clients together.
+
+- **Version-2 request authentication.** The HMAC now covers the request id, operation, a timestamp and the SHA-256 of the whole request, so a captured request can no longer be replayed or sent with altered parameters. Each request id is accepted once; timestamps more than `--max-clock-skew` (default 60 s) from the server's clock are refused. Version-1 tokens are refused unless the server is started with `--allow-legacy-auth`. Specification and a frozen test vector for other-language clients: `hsm/ipc_auth.py`, `tests/test_ipc_auth_v2.py`.
+- **Kernel-verified callers.** The server reads the connecting process's uid and pid from the kernel (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS), refuses users not allowed by `--allow-uid` (default: only its own user, which refuses root too), and writes `<claimed name>(uid=…,pid=…)` to the audit log.
+- **Safe errors.** Responses carry a fixed message and a `code` (`rate_limited`, `policy_denied`, `not_found`, `decrypt_failed`, `invalid_request`, `internal`, `auth_failed`); details stay in the server log. `IPCClient` raises `RateLimitedError`.
+- **Dependencies.** cryptography 47.0.0 → 50.0.0 (7 advisories). `pycryptodome` 3.23.0 added to the lock (Ethereum operations failed in the container without it). Test tools moved to `requirements-dev.lock`, so they no longer ship in the image.
+- **Container.** The Dockerfile builds again (its multi-line `HEALTHCHECK` was invalid), and the health check authenticates, so set `PYHSM_IPC_SECRET` for the container.
+- **Tests.** 411 (was 391), including 19 for the new protocol; a flaky Shamir property test fixed; generated files removed from git.
+
+**Migration from v2.3.x**
+
+```bash
+# Server: nothing new is required. To let old clients connect while you upgrade them:
+vectorguard-pyhsm-server ... --allow-legacy-auth      # remove once every client is on 2.4.0
+
+# Other OS users that must connect (default: only the server's own user):
+vectorguard-pyhsm-server ... --allow-uid 1001
+
+# Python clients: upgrade the package; IPCClient signs version 2 automatically.
+```
+
+Clients in other languages must implement the version-2 signature (`hsm/ipc_auth.py`) and reproduce the vector in `tests/test_ipc_auth_v2.py`.
+
+---
+
 ### v2.3.7 (2026-11-02)
 
 **Repository moved to VectorGuard-Labs; documentation refresh**

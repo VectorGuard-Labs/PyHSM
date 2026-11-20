@@ -51,6 +51,12 @@ import struct
 import uuid
 from typing import Any, Optional
 
+from .ipc_auth import sign_request
+
+
+class RateLimitedError(RuntimeError):
+    """The server's per-key rate limit was reached. Temporary: retry after a short wait."""
+
 _MSG_HEADER = struct.Struct(">I")
 _MAX_MSG_BYTES = 64 * 1024 * 1024
 
@@ -175,13 +181,14 @@ class IPCClient:
             raise ConnectionError("IPC client is closed. Call reconnect() first.")
 
         request_id = str(uuid.uuid4())
-        request = {
+        unsigned = {
             "type": operation,
             "request_id": request_id,
             "caller_id": self._caller_id,
-            "auth": self._auth_token(request_id, operation),
             **kwargs,
         }
+        # Version-2 authentication: the signature covers every field and the time (ipc_auth.py).
+        request = sign_request(self._ipc_secret, unsigned) if self._ipc_secret else unsigned
 
         try:
             _send_msg(self._sock, request)
@@ -200,6 +207,8 @@ class IPCClient:
             )
 
         if not response.get("ok"):
+            if response.get("code") == "rate_limited":
+                raise RateLimitedError(f"PyHSM IPC ({operation}): {response.get('error', 'rate-limited')}")
             raise RuntimeError(
                 f"PyHSM IPC error ({operation}): {response.get('error', 'unknown error')}"
             )

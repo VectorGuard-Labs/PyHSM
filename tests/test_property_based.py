@@ -243,7 +243,13 @@ class TestShamirInvariants:
         assert bytes(recovered) == secret
         zeroize(recovered)
 
-    @given(st.binary(min_size=1, max_size=64),
+    # At least 16 bytes: with k-1 shares the reconstruction is a uniformly random value, so it
+    # equals the real secret by pure chance with probability 256**-len(secret). For a 1-byte
+    # secret that is 1 in 256 per example, and with 200 examples per run this test used to fail
+    # about one run in three. That chance match is not a weakness (an attacker could guess a
+    # 1-byte secret just as well with no shares at all), so it is checked separately, as a
+    # rate, in test_short_secrets_are_recovered_from_too_few_shares_only_at_chance_rate.
+    @given(st.binary(min_size=16, max_size=64),
            st.integers(min_value=3, max_value=6).flatmap(
                lambda k: st.tuples(st.just(k), st.integers(min_value=k, max_value=min(k + 3, 8)))
            ))
@@ -256,9 +262,8 @@ class TestShamirInvariants:
 
         Using k≥3 directly in the strategy ensures k-1≥2, satisfying the minimum-shares
         requirement; the checksum mismatch (not the len check) is what fires.
-        In rare GF-arithmetic coincidences for short secrets, the wrong reconstruction
-        matches the reconstruction_hmac purely by chance — but in those cases the
-        reconstructed bytes will differ from the original secret, so we accept that too.
+        Secrets are at least 16 bytes, so a chance match (probability 2**-128) cannot happen;
+        short secrets are covered by the rate test below.
         """
         k, n = k_n
         shares = split_secret(secret, k, n)
@@ -272,6 +277,30 @@ class TestShamirInvariants:
             zeroize(result)
         except ValueError:
             pass  # expected — checksum or HMAC mismatch detected insufficient shares
+
+    def test_short_secrets_are_recovered_from_too_few_shares_only_at_chance_rate(self):
+        """PB-SS-02b: For a 1-byte secret, k-1 shares give the secret no more often than guessing.
+
+        Expected rate 1/256 (about 0.4%). Over 2,000 trials the test allows up to 3%: a threshold
+        failure would recover it every time, while at the true rate exceeding 3% has probability
+        far below 1e-30, so this does not flake.
+        """
+        import random
+        rng = random.Random(1234)  # fixed seed: the same trials every run
+        trials, hits = 2000, 0
+        for _ in range(trials):
+            secret = bytes([rng.randrange(256)])
+            k = rng.randrange(3, 7)
+            n = rng.randrange(k, min(k + 3, 8) + 1)
+            shares = split_secret(secret, k, n)
+            try:
+                result = reconstruct_secret(shares[:k - 1])
+                if bytes(result) == secret:
+                    hits += 1
+                zeroize(result)
+            except ValueError:
+                pass
+        assert hits / trials < 0.03, f"{hits}/{trials} recovered from k-1 shares (chance is ~0.4%)"
 
     @given(st.binary(min_size=1, max_size=64), _shamir_k_n)
     @_FAST_SETTINGS

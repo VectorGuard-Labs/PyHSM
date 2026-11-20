@@ -318,7 +318,7 @@ The following threats are **explicitly outside PyHSM's security boundary**:
 
 PyHSM maintains the following security testing baseline:
 
-- **Unit tests:** ≥ 73% line and branch coverage (Python layer; 391 tests as of v2.3.7)
+- **Unit tests:** ≥ 73% line and branch coverage (Python layer; 411 tests as of v2.4.0)
 - **Known-Answer Tests (KATs):** Run on every `PyHSM` instantiation via
   `run_self_tests()`. Fail-fast on any mismatch. As of v2.2.0, covers all
   10 primitives in active use: AES-256-GCM, PBKDF2-SHA256, HMAC-SHA256,

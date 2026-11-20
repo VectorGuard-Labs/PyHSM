@@ -1,3 +1,0 @@
-[console_scripts]
-vectorguard-pyhsm = cli:main
-vectorguard-pyhsm-server = hsm.ipc_server:main

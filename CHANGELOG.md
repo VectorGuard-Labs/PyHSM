@@ -6,6 +6,23 @@ Repository: https://github.com/VectorGuard-Labs/PyHSM
 
 ---
 
+## [2.4.0] — 2026-11-20 (**breaking change to the IPC protocol**)
+
+**IPC authentication version 2, replay protection, peer identity, safe errors; dependency and container fixes**
+
+- **Breaking: version-2 request authentication.** The HMAC now covers the request id, operation, a timestamp and the SHA-256 of the whole request (canonical JSON), so a captured request can no longer be replayed or sent with altered parameters (another key, another ciphertext). The server remembers accepted request ids and refuses repeats, and refuses timestamps more than `--max-clock-skew` (default 60 s) away. Version-1 tokens are refused unless the server is started with `--allow-legacy-auth`. With default settings, clients and servers from before this release cannot talk to each other. See `hsm/ipc_auth.py`; `IPCClient` signs version 2.
+- **Peer identity.** The server reads the connecting process's uid and pid from the kernel (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED`/`LOCAL_PEERPID` on macOS) and refuses users not listed with `--allow-uid` (default: only the server's own user, which also refuses root). The audit log's caller is now `<claimed name>(uid=…,pid=…)`; the claimed part is cleaned and capped so it cannot imitate the kernel part. A peer in another PID namespace (another container) shows pid 0; the uid is still exact.
+- **Errors leak nothing.** Responses carry a fixed message and a `code` (`rate_limited`, `policy_denied`, `not_found`, `decrypt_failed`, `invalid_request`, `internal`, `auth_failed`). Exception text (key ids, file paths, versions, library output) stays in the server log. `IPCClient` raises `RateLimitedError` for `rate_limited`.
+- **cryptography 47.0.0 → 50.0.0** (7 advisories). The lock is split: `requirements.lock` is runtime only and is what the image installs; test tools moved to `requirements-dev.lock` (pytest 8.3.5 there has PYSEC-2026-1845; development machines only).
+- **The Dockerfile builds.** The multi-line `HEALTHCHECK` was not valid Dockerfile syntax. The health check is now `healthcheck.py`, which authenticates (the old one could never pass, since the server requires authentication), so run the container with `PYHSM_IPC_SECRET` (or `PYHSM_IPC_SECRET_FILE`) set.
+- New tests: `tests/test_ipc_auth_v2.py` (19), including a frozen signing vector that other-language clients must reproduce.
+
+- **`pycryptodome` added to `requirements.lock`** (3.23.0, hash-pinned; `pyproject.toml` now `<4`). It was declared but not locked, and `hsm/ethereum.py` imports it only when an `eth-*` operation runs, so those operations failed in the container without anyone noticing.
+- **Flaky Shamir property test fixed.** `test_fewer_than_threshold_shares_never_recover_secret` asserted that k-1 shares never yield the secret, but for a 1-byte secret a random reconstruction matches 1 time in 256, so the test failed about one run in three. It now uses secrets of at least 16 bytes, and a new fixed-seed test checks that short secrets are recovered from k-1 shares only at chance rate (measured 0.45% against 0.39% expected; a broken threshold gives 100%). Not a Shamir flaw.
+- **Generated files are no longer tracked:** `__pycache__/`, `*.pyc`, `.coverage`, `*.egg-info/` and friends are in `.gitignore` and removed from the index (39 files), so running the tests no longer dirties the working tree.
+
+---
+
 ## [2.3.7] — 2026-11-02
 
 ### Changed

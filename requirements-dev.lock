@@ -1,0 +1,43 @@
+# PyHSM test tools, hash-pinned. Development and CI only; never installed in the image.
+#
+#   pip install --require-hashes -r requirements-dev.lock
+#
+# pip-audit reports PYSEC-2026-1845 for pytest 8.3.5 (fixed in 9.0.3). It affects test runs on a
+# developer machine, not the key service. Upgrading needs the `pytest<9` bound in pyproject.toml
+# lifted and the suite re-run on pytest 9.
+-r requirements.lock
+
+# ---------------------------------------------------------------------------
+# Dev dependencies
+# ---------------------------------------------------------------------------
+
+pytest==8.3.5 \
+    --hash=sha256:f4efe70cc14e511565ac476b57c279e12a855b11f48f212af1080ef2263d3845 \
+    --hash=sha256:c69214aa47deac29fad6c2a4f590b9c4a9fdb16a403176fe154b79c0b4d4d820
+
+pytest-cov==7.1.0 \
+    --hash=sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2 \
+    --hash=sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678
+
+coverage==7.15.2 \
+    --hash=sha256:3df60dc267f0a2ca23cb7a9ab1109c62b9335ffbf519fcfe167157c28c09b81d \
+    --hash=sha256:7dc2950a2992cd676d35c20ae63522836deeb034f08874699d14068710af3dc1 \
+    --hash=sha256:26c3b04a6377fd7c09800921fa934e3a17c0020439cd59df73e73ae1d4b6a78c \
+    --hash=sha256:a300c6934e0989c327b9e8a1e110329da4641149f872bbe9f70168be66da76c1 \
+    --hash=sha256:1121caa19159a38b5463eaae4b1e1fde81e525b15ecc5e000cd5b1a108f743a8
+
+# ---------------------------------------------------------------------------
+# Transitive (required by pytest)
+# ---------------------------------------------------------------------------
+
+iniconfig==2.3.0 \
+    --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
+    --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
+
+pluggy==1.6.0 \
+    --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
+    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
+
+packaging==26.2 \
+    --hash=sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661 \
+    --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e

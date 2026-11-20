@@ -5,13 +5,14 @@
 #   Stage 2 (runtime) — minimal image, no build tools, no pip, no shell history
 #
 # Build:
-#   docker build -t pyhsm:2.1.0 .
+#   docker build -t pyhsm:2.3.7 .
 #
 # Run (see docker-compose.yml for full hardened example):
 #   docker run --name pyhsm --user pyhsm:pyhsm --read-only \
 #     -v /var/lib/pyhsm:/data:Z \
 #     -v /run/secrets/pyhsm-password:/run/secrets/pyhsm-password:ro,Z \
-#     pyhsm:2.1.0
+#     -e PYHSM_IPC_SECRET=...  \
+#     pyhsm:2.3.7
 
 # ---- Stage 1: builder -------------------------------------------------------
 FROM python:3.13-slim AS builder
@@ -29,14 +30,14 @@ WORKDIR /build
 # application code changes.
 COPY requirements.lock pyproject.toml ./
 COPY hsm/ ./hsm/
-COPY cli.py ./
+COPY cli.py healthcheck.py ./
 
 # Install ALL dependencies with hash verification into a prefix directory.
 # --require-hashes: reject any package whose SHA-256 does not match the lockfile.
 # --no-deps: we manage the full dependency graph explicitly in requirements.lock.
 # --prefix: install into /install so Stage 2 can copy the exact set of files.
 RUN pip install --require-hashes --no-deps --prefix=/install -r requirements.lock \
- && pip install --no-deps --prefix=/install -e .
+ && pip install --no-deps --prefix=/install .
 
 # ---- Stage 2: runtime -------------------------------------------------------
 FROM python:3.13-slim AS runtime
@@ -59,6 +60,7 @@ COPY --from=builder /install /usr/local
 # reference and so the CLI entry point resolves correctly)
 COPY --from=builder /build/hsm /app/hsm
 COPY --from=builder /build/cli.py /app/cli.py
+COPY --from=builder /build/healthcheck.py /app/healthcheck.py
 
 # Runtime directories
 RUN install -d -m 750 -o pyhsm -g pyhsm /data \
@@ -74,19 +76,11 @@ USER pyhsm:pyhsm
 # can connect to the IPC server.
 VOLUME ["/data", "/run/pyhsm", "/var/log/pyhsm"]
 
-# Health check — verify the IPC server responds
+# Health check: an authenticated `health` request on the socket (see healthcheck.py).
+# One line, exec form: a Python program split across lines inside a shell-form CMD is not valid
+# Dockerfile syntax ("FROM requires either one or three arguments"), so the image did not build.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python3 -c "
-from hsm.ipc_client import IPCClient
-try:
-    with IPCClient('/run/pyhsm/pyhsm.sock') as c:
-        r = c.health()
-        assert r.get('status') == 'ok', r
-    exit(0)
-except Exception as e:
-    print(e)
-    exit(1)
-"
+    CMD ["python3", "/app/healthcheck.py"]
 
 # Default: run the IPC server.
 # Override CMD or use docker-compose to run the CLI instead.

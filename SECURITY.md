@@ -12,6 +12,17 @@ v1.x is no longer supported. Upgrade to v2.3.0 or later.
 
 ---
 
+## Changes in v2.4.0 (2026-11-20)
+
+| Change | Category | Details |
+|--------|----------|---------|
+| IPC request authentication version 2 | Security (breaking) | HMAC over request id, operation, timestamp and SHA-256 of the whole request; request ids accepted once; ±60 s clock skew. v1 refused unless `--allow-legacy-auth`. Closes replay and parameter tampering. |
+| Kernel-verified IPC peers | Security | uid/pid from `SO_PEERCRED`/`LOCAL_PEERCRED`; `--allow-uid` (default: the server's own uid, so root is refused); recorded in the audit caller. |
+| Fixed error messages with codes | Security | Exception text (key ids, paths, versions) no longer returned to IPC clients. |
+| cryptography 47.0.0 → 50.0.0 | Dependency | 7 published advisories in 47.0.0. |
+| pycryptodome locked; test tools removed from the runtime lock | Dependency | Ethereum operations work in the container; pytest/coverage no longer ship in the image. |
+| Dockerfile and health check | Operational | Image builds; health check authenticates. |
+
 ## Changes in v2.3.2 – v2.3.7 (2026-11-02)
 
 | Change | Category | Details |

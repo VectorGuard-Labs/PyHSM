@@ -1,12 +1,12 @@
 # PyHSM Adversarial Testing Report
 
 **Project:** PyHSM  
-**Version tested:** v2.3.7 (`main` branch at https://github.com/VectorGuard-Labs/PyHSM)  
-**Date:** November 2, 2026  
+**Version tested:** v2.4.0 (`main` branch at https://github.com/VectorGuard-Labs/PyHSM)  
+**Date:** November 20, 2026  
 **Tested by:** VectorGuard Labs internal review  
 **Test files:** `tests/test_adversarial.py`, `tests/test_ipc_adversarial.py`,
-`tests/test_lifecycle_recovery.py`, `tests/test_property_based.py`  
-**Result: 391 / 391 tests passed (0 xfail)**
+`tests/test_lifecycle_recovery.py`, `tests/test_property_based.py`, `tests/test_ipc_auth_v2.py`  
+**Result: 411 / 411 tests passed (0 xfail)**
 
 ---
 

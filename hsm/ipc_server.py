@@ -53,7 +53,17 @@ Security properties
   UID can connect. The server verifies this on startup.
 - HMAC authentication is REQUIRED. The server refuses to start without
   --ipc-secret (or PYHSM_IPC_SECRET). Every request must carry a valid
-  HMAC-SHA256(secret, request_id + operation) token.
+  version-2 token: HMAC-SHA256 over the request id, operation, timestamp and a
+  hash of the whole request body, so parameters cannot be altered. A request id
+  is accepted once, and the timestamp must be within --max-clock-skew seconds
+  (see hsm/ipc_auth.py). Version-1 tokens are refused unless
+  --allow-legacy-auth is given.
+- The kernel-reported identity of the connecting process (uid, pid) is checked
+  against --allow-uid (default: the server's own uid) and written to the audit
+  log next to the caller name the client gives.
+- Errors sent back are fixed messages with a code (rate_limited, not_found,
+  policy_denied, decrypt_failed, invalid_request, internal, auth_failed);
+  exception details stay in the server log.
 - Per-key locking: read-only operations (health, list_keys, has_key,
   get_public_key, get_metrics) hold no lock; key-mutating operations
   acquire a per-key lock via the PyHSM core's own _key_lock(). This
@@ -123,6 +133,15 @@ ALLOWED_OPERATIONS = frozenset({
     "get_metrics",
     "health",
 })
+
+from .ipc_auth import (
+    DEFAULT_MAX_SKEW_S,
+    SAFE_ERRORS,
+    Verifier,
+    attributed_caller,
+    classify_error,
+    peer_identity,
+)
 
 _MSG_HEADER = struct.Struct(">I")   # 4-byte big-endian uint32
 _MAX_MSG_BYTES = 64 * 1024 * 1024  # 64 MB — matches PyHSM plaintext limit
@@ -216,6 +235,9 @@ class IPCServer:
         rate_limit_max_ops: int = 100,
         rate_limit_window_s: float = 60.0,
         conn_timeout_s: float = _CONN_TIMEOUT_S,
+        max_clock_skew_s: int = DEFAULT_MAX_SKEW_S,
+        allow_legacy_auth: bool = False,
+        allowed_uids: Optional[set[int]] = None,
     ) -> None:
         # --- Require ipc_secret — no unauthenticated operation ---
         if not ipc_secret:
@@ -229,6 +251,12 @@ class IPCServer:
 
         self._socket_path = socket_path
         self._ipc_secret: bytes = ipc_secret.encode("utf-8")
+        # Version-2 authentication: the HMAC covers the whole request and its time, and a
+        # request id is accepted once. See hsm/ipc_auth.py.
+        self._verifier = Verifier(self._ipc_secret, max_skew_s=max_clock_skew_s, allow_legacy=allow_legacy_auth)
+        # Which operating-system users may connect, checked against what the kernel reports for
+        # the peer. Default: only the user this server runs as.
+        self._allowed_uids = set(allowed_uids) if allowed_uids else {os.getuid()}
         self._shutdown = threading.Event()
         self._conn_timeout_s = conn_timeout_s
 
@@ -236,7 +264,8 @@ class IPCServer:
             "event": "ipc_server_start",
             "socket_path": socket_path,
             "store_path": store_path,
-            "auth": "hmac-required",
+            "auth": "hmac-v2-required" + ("+legacy-v1" if allow_legacy_auth else ""),
+            "allowed_uids": sorted(self._allowed_uids),
         })
 
         self._hsm = PyHSM(
@@ -250,38 +279,42 @@ class IPCServer:
         _logger.info("PyHSM session opened", extra={"event": "ipc_hsm_ready"})
 
     def _authenticate(self, request: dict) -> bool:
-        """Verify HMAC-SHA256 request authentication. Always required."""
-        provided = request.get("auth", "")
-        request_id = request.get("request_id", "")
-        operation = request.get("type", "")
-        expected = _hmac.new(
-            self._ipc_secret,
-            f"{request_id}:{operation}".encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        return _hmac.compare_digest(provided, expected)
+        """Verify request authentication (version 2, see hsm/ipc_auth.py). Always required."""
+        ok, reason = self._verifier.verify(request)
+        if not ok:
+            # The reason is for the operator's log only; the client is told nothing more than
+            # "authentication failed", so it cannot probe which check failed.
+            _logger.warning("IPC authentication rejected", extra={
+                "event": "ipc_auth_rejected", "reason": reason,
+            })
+        return ok
 
-    def _handle_request(self, request: dict) -> dict:
+    def _handle_request(self, request: dict, peer=None) -> dict:
         """Dispatch a validated, authenticated request to the PyHSM instance."""
         op = request.get("type", "")
-        caller_id = request.get("caller_id", "ipc-client")
+        # The audit trail records the name the client gave AND the uid/pid the kernel reported.
+        caller_id = attributed_caller(request.get("caller_id"), peer) if peer is not None else (
+            str(request.get("caller_id", "ipc-client"))[:64]
+        )
 
         if op not in ALLOWED_OPERATIONS:
-            return {"ok": False, "error": f"Unknown operation: {op!r}"}
+            return {"ok": False, "code": "invalid_request", "error": "Unknown operation"}
 
         try:
             result = self._dispatch(op, request, caller_id)
             return {"ok": True, "data": result}
         except Exception as exc:
-            # Never include stack traces or raw exception details in the
-            # response — they may leak key IDs, file paths, or internal state.
+            # Only a fixed message goes back to the client: exception text can carry key ids,
+            # file paths, version numbers or library internals. The detail stays in this log.
+            code = classify_error(exc)
             _logger.error("IPC request failed", extra={
                 "event": "ipc_error",
                 "operation": op,
+                "code": code,
                 "error_type": type(exc).__name__,
                 "error": str(exc),
             })
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "code": code, "error": SAFE_ERRORS[code]}
 
     def _dispatch(self, op: str, req: dict, caller_id: str):
         hsm = self._hsm
@@ -343,6 +376,15 @@ class IPCServer:
         # caught below and the connection is dropped cleanly.
         conn.settimeout(self._conn_timeout_s)
         try:
+            # Who is connecting, according to the kernel. Refuse anyone not allowed before
+            # reading a single request. (The socket's mode 600 already stops other users; this
+            # also stops root, and any user the socket was shared with by mistake.)
+            peer = peer_identity(conn)
+            if peer.uid is None or peer.uid not in self._allowed_uids:
+                _logger.warning("IPC connection refused: peer not allowed", extra={
+                    "event": "ipc_peer_refused", "peer": peer.label(),
+                })
+                return
             while True:
                 request = _recv_msg(conn)
                 if request is None:
@@ -357,11 +399,12 @@ class IPCServer:
                     _send_msg(conn, {
                         "ok": False,
                         "request_id": request_id,
+                        "code": "auth_failed",
                         "error": "Authentication failed",
                     })
                     break  # close connection on auth failure
 
-                response = self._handle_request(request)
+                response = self._handle_request(request, peer)
                 response["request_id"] = request_id
                 _send_msg(conn, response)
 
@@ -476,6 +519,19 @@ def main() -> None:
         "--rate-limit", type=int, default=100,
         help="Max operations per key per minute (default: 100)",
     )
+    parser.add_argument(
+        "--max-clock-skew", type=int, default=DEFAULT_MAX_SKEW_S,
+        help=f"Seconds a request's timestamp may differ from this server's clock (default: {DEFAULT_MAX_SKEW_S})",
+    )
+    parser.add_argument(
+        "--allow-uid", type=int, action="append", default=None, metavar="UID",
+        help="Operating-system user id allowed to connect (repeatable). Default: only the user this server runs as.",
+    )
+    parser.add_argument(
+        "--allow-legacy-auth", action="store_true",
+        help="Also accept version-1 request authentication (request id and operation only; no protection "
+             "against altered parameters). For migrating old clients only. Default: refused.",
+    )
     args = parser.parse_args()
 
     if not args.password_file:
@@ -508,6 +564,9 @@ def main() -> None:
         password_file=args.password_file,
         ipc_secret=args.ipc_secret,
         rate_limit_max_ops=args.rate_limit,
+        max_clock_skew_s=args.max_clock_skew,
+        allow_legacy_auth=args.allow_legacy_auth,
+        allowed_uids=set(args.allow_uid) if args.allow_uid else None,
     )
     server.run()
 
